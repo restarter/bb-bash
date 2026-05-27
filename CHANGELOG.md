@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-05-27
+
 ### Added
 - `pr decline <id> [id ...]` — close PR without merging; batch-capable
 - `pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=...]` — merge PR; default strategy is `merge_commit`
