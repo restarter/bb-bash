@@ -56,7 +56,7 @@ No build step. Single bash script.
 
 ```bash
 # Lint
-shellcheck bb-api test/test_helper.bash
+shellcheck bb-api test/test_helper.bash scripts/install.sh
 
 # Tests (bats-core 1.x — install via 'brew install bats-core' or build from source)
 bats test/*.bats

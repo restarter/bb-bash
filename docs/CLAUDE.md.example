@@ -9,8 +9,17 @@ Copy the block below into your project's `CLAUDE.md` so AI agents
 ## Bitbucket via bb-api
 
 **Tool:** `bb-api` (https://github.com/restarter/bb-api)
+**Install** (if not present):
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/restarter/bb-api/main/scripts/install.sh | bash
+```
+Auto-resolves through symlinks; `.env` lives next to the real script
+(`~/.local/share/bb-api/.env` after `install.sh`).
+
 **Auto-detects** workspace/repo from this repo's bitbucket.org remote.
-**Auth:** `.env` next to the script (`BB_API_EMAIL`, `BB_API_TOKEN`).
+**Auth:** `BB_API_EMAIL` + `BB_API_TOKEN` in the `.env` file
+(`~/.local/share/bb-api/.env` for installed bb-api, or the file next to
+the script for manual installs — bb-api resolves symlinks).
 
 ### Common workflows
 

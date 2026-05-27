@@ -2,23 +2,35 @@
 #
 # bb-api - Bitbucket Cloud API wrapper
 #
-# Reads credentials from .env file next to this script.
-# Copy .env.example to .env and fill in your values.
+# Reads credentials from .env file next to the *real* script (symlinks are
+# resolved through resolve_script_dir, so a PATH symlink at /usr/local/bin or
+# ~/.local/bin still locates .env in the data directory). Copy .env.example
+# to .env and fill in your values, or install via the curl-pipe-bash flow
+# documented in README.md / scripts/install.sh.
 #
-# Usage:
-#   bb-api pr list                                    - List open PRs
-#   bb-api pr create <target> <title> [description]   - Create PR from current branch
-#   bb-api pr show <id>                               - PR details (title, author, files)
-#   bb-api pr diff <id>                               - Full diff
-#   bb-api pr comments <id>                           - List PR comments
-#   bb-api pr comment <id> <text>                     - Add general comment to PR
-#   bb-api pr inline [--old] <id> <path> <line> <text> - Inline comment (default new code, --old for deleted)
-#   bb-api pr approve <id>                            - Approve PR
-#   bb-api pr reply <pr_id> <comment_id> <text>       - Reply to a comment
-#   bb-api pr edit-comment <pr_id> <comment_id> <text> - Edit a comment
-#   bb-api pr delete-comment <pr_id> <comment_id>     - Delete a comment
-#   bb-api raw <endpoint>                             - Raw API call (GET)
-#   bb-api raw-post <endpoint> <json>                 - Raw API call (POST)
+# Usage (see usage() for the live list; this header summarizes):
+#   bb-api pr list [--state=<s>] [--author=<u>]   - List PRs (default: open)
+#   bb-api pr create <target> <title> [desc]      - Create PR from current branch
+#   bb-api pr update <id> [--title=...] [--description=...] [--reviewers=u1,u2]
+#                                                 - Update PR metadata
+#   bb-api pr show <id>                           - PR details + changed files
+#   bb-api pr open <id>                           - Open PR in default browser
+#   bb-api pr diff <id>                           - Full diff
+#   bb-api pr checks <id>                         - CI statuses + Bitbucket Pipelines
+#   bb-api pr comments <id>                       - List comments
+#   bb-api pr comment <id> <text>                 - Add general comment
+#   bb-api pr inline [--old] <id> <path> <line> <text>
+#                                                 - Inline comment (default new code; --old for deleted)
+#   bb-api pr approve <id> [id ...]               - Approve PR(s), batch-capable
+#   bb-api pr decline <id> [id ...]               - Decline (close without merge), batch-capable
+#   bb-api pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=...]
+#                                                 - Merge PR (default strategy: merge_commit)
+#   bb-api pr reply <pr_id> <comment_id> <text>   - Reply to a comment
+#   bb-api pr edit-comment <pr_id> <comment_id> <text>
+#                                                 - Edit a comment
+#   bb-api pr delete-comment <pr_id> <comment_id> - Delete a comment
+#   bb-api raw <endpoint>                         - Raw API call (GET)
+#   bb-api raw-post <endpoint> <json>             - Raw API call (POST)
 
 set -euo pipefail
 
