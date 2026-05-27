@@ -52,18 +52,55 @@ bd close <id>         # Complete work
 
 ## Build & Test
 
-_Add your build and test commands here_
+No build step. Single bash script.
 
 ```bash
-# Example:
-# npm install
-# npm test
+# Lint
+shellcheck bb-api test/test_helper.bash
+
+# Tests (bats-core 1.x — install via 'brew install bats-core' or build from source)
+bats test/*.bats
+
+# Live API tests (optional, hits real Bitbucket — see docs/contributing.md)
+BB_API_TEST_LIVE=1 ... bats test/test_live.bats
 ```
+
+CI: see `.github/workflows/ci.yml` — runs shellcheck + bats on push/PR (SHA-pinned actions, bats-core installed from upstream).
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+Single-file bash script (`bb-api`), divided into clearly-labeled sections. See [docs/design.md](docs/design.md) for full details. Quick map:
+
+1. Usage docstring (header comment)
+2. Helpers (`die`, `require_args`, `resolve_workspace_repo`, `batch_action`)
+3. API helpers (`api_get`, `api_post` with `--soft`; `api_put`, `api_delete`)
+4. Commands (`cmd_pr_*`, `cmd_raw*`)
+5. `usage()`
+6. `main()` router
+7. Top-level guard (`[[ "${BASH_SOURCE[0]}" == "${0}" ]]`) so imperative setup runs only on direct invocation
+
+Auto-detect precedence and URL parsing live in [docs/design.md](docs/design.md) (authoritative).
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+- `set -euo pipefail` at script top — never remove
+- All function names lowercase_with_underscores; commands named `cmd_<group>_<action>`
+- `die <msg>` for fatal errors (never bare `exit 1`)
+- `require_args <N> $# "Usage: ..."` for argument count checks
+- Output: plain text, **no emojis** (consistency across commands)
+- All JSON parsing via `jq` — never grep/sed
+- All user input into JSON via `jq --arg` or `jq -Rs` (never naive concatenation)
+- POSIX-portable bash (no bash-4-only features — script may run on macOS bash 3.2)
+- Batch commands use `batch_action` helper (see [docs/contributing.md](docs/contributing.md))
+- Tests assert both response parsing AND outbound payload (via `last_curl_call`)
+
+### Adding a new command
+
+1. Add `cmd_pr_<name>()` function near related commands
+2. Add to router's `pr` subcommand `case` block
+3. Add to `usage()` help text
+4. Update README usage + add full entry in `docs/commands.md`
+5. Add bats test in `test/test_pr_commands.bats` (with payload assertion)
+6. Add line to `CHANGELOG.md [Unreleased]`
+
+Full contributing guide: [docs/contributing.md](docs/contributing.md).

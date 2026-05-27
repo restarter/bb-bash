@@ -12,8 +12,7 @@
 #   bb-api pr diff <id>                               - Full diff
 #   bb-api pr comments <id>                           - List PR comments
 #   bb-api pr comment <id> <text>                     - Add general comment to PR
-#   bb-api pr inline <id> <path> <line> <text>        - Inline comment on file:line
-#   bb-api pr inline-old <id> <path> <line> <text>    - Inline comment on deleted line
+#   bb-api pr inline [--old] <id> <path> <line> <text> - Inline comment (default new code, --old for deleted)
 #   bb-api pr approve <id>                            - Approve PR
 #   bb-api pr reply <pr_id> <comment_id> <text>       - Reply to a comment
 #   bb-api pr edit-comment <pr_id> <comment_id> <text> - Edit a comment
@@ -23,17 +22,72 @@
 
 set -euo pipefail
 
-# --- Load .env ---
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[[ -f "${SCRIPT_DIR}/.env" ]] && source "${SCRIPT_DIR}/.env"
-
 # --- Config ---
-BB_API_EMAIL="${BB_API_EMAIL:?BB_API_EMAIL is required (set in .env or environment)}"
-BB_API_TOKEN="${BB_API_TOKEN:?BB_API_TOKEN is required (set in .env or environment)}"
-WORKSPACE="${BB_API_WORKSPACE:?BB_API_WORKSPACE is required (set in .env or environment)}"
-REPO="${BB_API_REPO:?BB_API_REPO is required (set in .env or environment)}"
-BASE_URL="https://api.bitbucket.org/2.0/repositories/${WORKSPACE}/${REPO}"
-AUTH="${BB_API_EMAIL}:${BB_API_TOKEN}"
+# Email and token are required for all invocations; WORKSPACE/REPO are
+# resolved by the top-level block at the bottom of this file, via
+# resolve_workspace_repo(). When sourced for testing (BASH_SOURCE guard),
+# the top-level block is skipped — tests set globals manually.
+
+# Resolve workspace/repo from git remote (or env override).
+# Precedence:
+#   1. $BB_API_REMOTE → use that remote's URL
+#   2. 'origin' if its URL matches bitbucket.org
+#   3. First remote whose URL matches bitbucket.org
+#   4. $BB_API_WORKSPACE + $BB_API_REPO env vars
+#   5. Error with help
+resolve_workspace_repo() {
+    local url remote
+    if [[ -n "${BB_API_REMOTE:-}" ]]; then
+        url=$(git remote get-url -- "$BB_API_REMOTE" 2>/dev/null) \
+            || die "BB_API_REMOTE='$BB_API_REMOTE' is not a known git remote in this directory"
+    else
+        url=$(git remote get-url origin 2>/dev/null || true)
+        if ! [[ "$url" =~ (^|@|/)bitbucket\.org[:/] ]]; then
+            url=""
+            for remote in $(git remote 2>/dev/null); do
+                local candidate
+                candidate=$(git remote get-url -- "$remote" 2>/dev/null || true)
+                if [[ "$candidate" =~ (^|@|/)bitbucket\.org[:/] ]]; then
+                    url="$candidate"
+                    break
+                fi
+            done
+        fi
+    fi
+
+    if [[ -n "$url" ]]; then
+        # Normalize: strip trailing slash, then .git, then trailing slash again
+        local stripped="${url%/}"
+        stripped="${stripped%.git}"
+        stripped="${stripped%/}"
+        # Drop everything up to and including bitbucket.org[:/]
+        stripped="${stripped#*bitbucket.org[:/]}"
+        WORKSPACE="${stripped%%/*}"
+        local rest="${stripped#*/}"
+        REPO="${rest%%/*}"  # drop any trailing path segments
+
+        # Validate against Bitbucket slug grammar
+        if ! [[ "$WORKSPACE" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$ ]]; then
+            die "Invalid workspace slug parsed from remote URL: '$WORKSPACE' (URL: $url)"
+        fi
+        if ! [[ "$REPO" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$ ]]; then
+            die "Invalid repo slug parsed from remote URL: '$REPO' (URL: $url)"
+        fi
+    else
+        WORKSPACE="${BB_API_WORKSPACE:-}"
+        REPO="${BB_API_REPO:-}"
+        if [[ -z "$WORKSPACE" || -z "$REPO" ]]; then
+            die "Cannot resolve Bitbucket workspace/repo.
+Tried in order:
+  1. \$BB_API_REMOTE env var
+  2. 'origin' remote (must point to bitbucket.org)
+  3. Any remote pointing to bitbucket.org
+  4. \$BB_API_WORKSPACE and \$BB_API_REPO env vars
+
+Set env vars or run from a directory inside a bitbucket.org repo."
+        fi
+    fi
+}
 
 # --- Helpers ---
 die() { echo "Error: $*" >&2; exit 1; }
@@ -43,7 +97,25 @@ require_args() {
     [[ "$have" -ge "$need" ]] || die "$msg"
 }
 
+# require_numeric <field-name> <value>
+# Validates that a CLI-supplied identifier (PR id, comment id) is a
+# non-negative integer before it gets interpolated into a URL path.
+# Not a security boundary (the user authenticates as themselves), but
+# prevents path-traversal-like surprises and gives clear error messages.
+require_numeric() {
+    local name="$1" val="$2"
+    [[ "$val" =~ ^[0-9]+$ ]] || die "$name must be numeric, got: $val"
+}
+
+# api_get [--soft] <endpoint>
+# Default: dies on HTTP >=400.
+# --soft: prints body to stdout, returns 1 on HTTP >=400.
 api_get() {
+    local soft=0
+    if [[ "${1:-}" == "--soft" ]]; then
+        soft=1
+        shift
+    fi
     local endpoint="$1"
     local url="${BASE_URL}${endpoint}"
     local response http_code body
@@ -51,6 +123,10 @@ api_get() {
     http_code=$(echo "$response" | tail -n1)
     body=$(echo "$response" | sed '$d')
     if [[ "$http_code" -ge 400 ]]; then
+        if [[ $soft -eq 1 ]]; then
+            echo "$body"
+            return 1
+        fi
         local msg
         msg=$(echo "$body" | jq -r '.error.message // .error // empty' 2>/dev/null || echo "$body")
         die "API error (HTTP $http_code): ${msg:-$body}"
@@ -58,7 +134,17 @@ api_get() {
     echo "$body"
 }
 
+# api_post [--soft] <endpoint> <data>
+# Default: dies on HTTP >=400.
+# --soft: prints body to stdout, returns 1 on HTTP >=400.
+# Use --soft for batch commands so one failure doesn't abort the loop.
+# Use --soft for optional endpoints (e.g. pipelines) that may 403 on token scope.
 api_post() {
+    local soft=0
+    if [[ "${1:-}" == "--soft" ]]; then
+        soft=1
+        shift
+    fi
     local endpoint="$1"
     local data="$2"
     local url="${BASE_URL}${endpoint}"
@@ -71,6 +157,10 @@ api_post() {
     http_code=$(echo "$response" | tail -n1)
     body=$(echo "$response" | sed '$d')
     if [[ "$http_code" -ge 400 ]]; then
+        if [[ $soft -eq 1 ]]; then
+            echo "$body"
+            return 1
+        fi
         local msg
         msg=$(echo "$body" | jq -r '.error.message // .error // empty' 2>/dev/null || echo "$body")
         die "API error (HTTP $http_code): ${msg:-$body}"
@@ -106,9 +196,101 @@ api_delete() {
         "$url"
 }
 
+# batch_action <label> <endpoint-template> <jq-success-msg> "$@"
+# Loop over 1+ PR IDs, call api_post --soft on each, print per-PR result.
+# Sleep 0.3s (or $BB_API_BATCH_DELAY) between calls when total > 1.
+#
+# Arguments:
+#   $1 = label              human verb past tense (e.g. "approved by", "declined")
+#   $2 = endpoint-template  with literal {id} placeholder (e.g. "/pullrequests/{id}/approve")
+#   $3 = jq-success-msg     jq expression applied to response body for success suffix
+#   $@ = PR IDs
+batch_action() {
+    local label="$1" endpoint_tmpl="$2" jq_msg="$3"
+    shift 3
+    local id resp total=$# i=0
+    for id in "$@"; do
+        require_numeric "PR id" "$id"
+        i=$((i + 1))
+        local endpoint="${endpoint_tmpl//\{id\}/$id}"
+        if resp=$(api_post --soft "$endpoint" "{}"); then
+            local msg
+            # Coerce null/empty to "ok" inside jq so we never print "(null)".
+            msg=$(echo "$resp" | jq -r "($jq_msg) // \"ok\" | tostring" 2>/dev/null || echo "ok")
+            [[ -z "$msg" || "$msg" == "null" ]] && msg="ok"
+            printf 'PR #%-5s %s (%s)\n' "$id" "$label" "$msg"
+        else
+            local err
+            err=$(echo "$resp" | jq -r '.error.message // .error // "unknown error"' 2>/dev/null \
+                || echo "unparseable response")
+            printf 'PR #%-5s error: %s\n' "$id" "$err"
+        fi
+        if [[ $total -gt 1 && $i -lt $total ]]; then
+            sleep "${BB_API_BATCH_DELAY:-0.3}"
+        fi
+    done
+}
+
 # --- Commands ---
+# pr list [--state=open|merged|declined|superseded|all] [--author=<user>]
+# Default --state=open preserves prior behavior.
+# Note: --reviewer is not yet supported because Bitbucket BBQL doesn't
+# allow filtering on `reviewers.username`. Tracked in bb-api-oja.
 cmd_pr_list() {
-    api_get "/pullrequests?state=OPEN" | jq -r '
+    local state="OPEN" author=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --state=*)
+                local raw="${1#--state=}"
+                # POSIX-portable case conversion (avoid bash 4+ ${var,,}/${var^^})
+                local raw_lower raw_upper
+                raw_lower=$(echo "$raw" | tr '[:upper:]' '[:lower:]')
+                raw_upper=$(echo "$raw" | tr '[:lower:]' '[:upper:]')
+                case "$raw_lower" in
+                    open|merged|declined|superseded)  state="$raw_upper" ;;
+                    all)                              state="" ;;
+                    *)                                die "Unknown --state value: $raw (open|merged|declined|superseded|all)" ;;
+                esac
+                ;;
+            --author=*)
+                author="${1#--author=}"
+                ;;
+            --reviewer=*)
+                die "--reviewer filter is not yet supported (BBQL limitation). Tracked in bb-api-oja."
+                ;;
+            *)
+                die "Unknown flag: $1"
+                ;;
+        esac
+        shift
+    done
+
+    local query="pagelen=50"
+    [[ -n "$state" ]] && query="${query}&state=${state}"
+
+    # Build BBQL filter; join with " AND " via explicit loop (IFS join uses
+    # only first character of IFS, so the IFS=' AND ' trick silently joins
+    # on space).
+    local filters=()
+    if [[ -n "$author" ]]; then
+        local quoted
+        quoted=$(jq -Rrn --arg v "$author" '"author.username=" + ($v | tojson)')
+        filters+=("$quoted")
+    fi
+    if [[ ${#filters[@]} -gt 0 ]]; then
+        local q="${filters[0]}"
+        local f
+        for f in "${filters[@]:1}"; do
+            q="${q} AND ${f}"
+        done
+        # Full URL-encode via jq @uri (handles &, +, #, %, ?, unicode, etc.
+        # — not just space and quote as the previous two-substitution hack did)
+        local q_encoded
+        q_encoded=$(jq -rn --arg s "$q" '$s | @uri')
+        query="${query}&q=${q_encoded}"
+    fi
+
+    api_get "/pullrequests?${query}" | jq -r '
         .values[] | "PR #\(.id) [\(.state)] \(.title)\n  Author: \(.author.display_name)\n  Branch: \(.source.branch.name) -> \(.destination.branch.name)\n"'
 }
 
@@ -141,8 +323,48 @@ cmd_pr_create() {
         | jq -r '"PR #\(.id) created: \(.links.html.href)"'
 }
 
+# pr update <id> [--title=...] [--description=...] [--reviewers=user1,user2]
+# Reviewers list is FULL replacement (Bitbucket API has no PATCH semantics).
+# Reviewers passed as Bitbucket usernames; the API has been deprecating
+# username as a stable identifier — tracked in bb-api-oja for UUID migration.
+cmd_pr_update() {
+    require_args 1 $# "Usage: bb-api pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2]"
+    local pr_id="$1"
+    require_numeric "PR id" "$pr_id"
+    shift
+    local title="" desc="" reviewers=""
+    local title_set=0 desc_set=0 reviewers_set=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --title=*)        title="${1#--title=}"; title_set=1 ;;
+            --description=*)  desc="${1#--description=}"; desc_set=1 ;;
+            --reviewers=*)    reviewers="${1#--reviewers=}"; reviewers_set=1 ;;
+            *)                die "Unknown flag: $1" ;;
+        esac
+        shift
+    done
+    [[ $title_set -eq 1 || $desc_set -eq 1 || $reviewers_set -eq 1 ]] \
+        || die "Nothing to update (pass --title, --description, or --reviewers)"
+
+    # Send the field if the flag was passed, even when the value is empty
+    # (clearing description, for example). Previously empty values were
+    # silently dropped, producing a no-op PUT that pretended to succeed.
+    local payload="{}"
+    [[ $title_set -eq 1 ]]    && payload=$(echo "$payload" | jq -c --arg t "$title" '. + {title: $t}')
+    [[ $desc_set -eq 1 ]]     && payload=$(echo "$payload" | jq -c --arg d "$desc" '. + {description: $d}')
+    if [[ $reviewers_set -eq 1 ]]; then
+        local arr
+        arr=$(echo "$reviewers" | jq -Rc 'split(",") | map(select(length > 0)) | map({username: .})')
+        payload=$(echo "$payload" | jq -c --argjson r "$arr" '. + {reviewers: $r}')
+    fi
+
+    api_put "/pullrequests/${pr_id}" "$payload" \
+        | jq -r '"PR #\(.id) updated: \(.links.html.href // "ok")"'
+}
+
 cmd_pr_show() {
     local pr_id="$1"
+    require_numeric "PR id" "$pr_id"
     local pr
     pr=$(api_get "/pullrequests/${pr_id}")
 
@@ -161,15 +383,100 @@ Link:        \(.links.html.href // "n/a")"'
         .values[] | "\(.status | if . == "added" then "+" elif . == "removed" then "-" else "M" end) \(.new.path // .old.path)  (+\(.lines_added) -\(.lines_removed))"'
 }
 
+# pr open <id> — open PR in default browser (macOS 'open', Linux 'xdg-open')
+cmd_pr_open() {
+    require_args 1 $# "Usage: bb-api pr open <id>"
+    local pr_id="$1"
+    require_numeric "PR id" "$pr_id"
+    local url
+    url=$(api_get "/pullrequests/${pr_id}" | jq -r '.links.html.href // empty')
+    [[ -n "$url" ]] || die "Could not resolve PR #${pr_id} URL"
+
+    local opener=""
+    case "$(uname -s)" in
+        Darwin)  opener="open" ;;
+        Linux)   opener="xdg-open" ;;
+        *)       echo "$url"; return 0 ;;
+    esac
+
+    if command -v "$opener" >/dev/null 2>&1; then
+        "$opener" "$url"
+    else
+        echo "$url"
+    fi
+}
+
 cmd_pr_diff() {
     local pr_id="$1"
+    require_numeric "PR id" "$pr_id"
     curl -s -L -u "${AUTH}" \
         -H "Accept: text/plain" \
         "${BASE_URL}/pullrequests/${pr_id}/diff"
 }
 
+# pr checks <id> — show PR statuses + Bitbucket Pipelines for source branch
+cmd_pr_checks() {
+    require_args 1 $# "Usage: bb-api pr checks <id>"
+    local pr_id="$1"
+    require_numeric "PR id" "$pr_id"
+
+    # Fetch PR to get source branch name
+    local pr branch
+    pr=$(api_get "/pullrequests/${pr_id}")
+    branch=$(echo "$pr" | jq -r '.source.branch.name')
+
+    # 1) PR-level statuses (external CI: GH Actions, Jenkins, etc.)
+    echo "--- PR statuses ---"
+    local statuses
+    statuses=$(api_get "/pullrequests/${pr_id}/statuses?pagelen=50")
+    local status_count
+    status_count=$(echo "$statuses" | jq -r '.values | length')
+    if [[ "$status_count" -eq 0 ]]; then
+        echo "  (no external statuses)"
+    else
+        echo "$statuses" | jq -r '
+            def norm(s):
+              {SUCCESSFUL: "pass", SUCCESS: "pass", PASSED: "pass",
+               INPROGRESS: "running", IN_PROGRESS: "running", PENDING: "running", RUNNING: "running",
+               FAILED: "fail", FAILURE: "fail", ERROR: "fail",
+               STOPPED: "stopped", HALTED: "stopped", CANCELLED: "stopped"}
+              [s | ascii_upcase] // (s | ascii_downcase);
+            .values[] | "  [\(norm(.state))] \(.name // .key) — \(.url // "no url")"'
+    fi
+
+    # 2) Bitbucket Pipelines for the source branch
+    # Use api_get --soft so missing read:pipeline scope degrades gracefully.
+    # URL-encode branch name (may contain slashes, e.g. feature/foo)
+    echo ""
+    echo "--- Bitbucket Pipelines (branch: $branch) ---"
+    local branch_encoded
+    branch_encoded=$(jq -rn --arg b "$branch" '$b | @uri')
+    local pipes
+    if pipes=$(api_get --soft "/pipelines/?target.ref_name=${branch_encoded}&sort=-created_on&pagelen=10"); then
+        local pipe_count
+        pipe_count=$(echo "$pipes" | jq -r '.values | length')
+        if [[ "$pipe_count" -eq 0 ]]; then
+            echo "  (no pipelines for this branch)"
+        else
+            echo "$pipes" | jq -r '
+                def norm(s):
+                  {SUCCESSFUL: "pass", SUCCESS: "pass", PASSED: "pass",
+                   INPROGRESS: "running", IN_PROGRESS: "running", PENDING: "running", RUNNING: "running",
+                   FAILED: "fail", FAILURE: "fail", ERROR: "fail",
+                   STOPPED: "stopped", HALTED: "stopped", CANCELLED: "stopped",
+                   PAUSED: "stopped"}
+                  [s | ascii_upcase] // (s | ascii_downcase);
+                .values[]
+                | "  #\(.build_number) [\(norm(.state.result.name // .state.name))] \(.created_on[:16]) — \(.target.commit.hash[:7]) by \(.creator.display_name // "?")"'
+        fi
+    else
+        echo "  (pipelines unavailable — token may lack read:pipeline scope)"
+    fi
+}
+
 cmd_pr_comments() {
     local pr_id="$1"
+    require_numeric "PR id" "$pr_id"
     api_get "/pullrequests/${pr_id}/comments?pagelen=100" | jq -r '
         .values[]
         | select(.deleted != true)
@@ -181,71 +488,121 @@ cmd_pr_comments() {
 
 cmd_pr_comment() {
     local pr_id="$1"
+    require_numeric "PR id" "$pr_id"
     shift
     local text="$*"
     [[ -n "$text" ]] || die "Comment text is required"
-    api_post "/pullrequests/${pr_id}/comments" \
-        "{\"content\": {\"raw\": $(printf '%s' "$text" | jq -Rs .)}}" \
+    local payload
+    payload=$(jq -nc --arg text "$text" '{content: {raw: $text}}')
+    api_post "/pullrequests/${pr_id}/comments" "$payload" \
         | jq -r '"Comment posted: \(.links.html.href // "ok")"'
 }
 
 cmd_pr_inline() {
+    local side="to"  # default: comment on new code
+    if [[ "${1:-}" == "--old" ]]; then
+        side="from"
+        shift
+    fi
+    require_args 4 $# "Usage: bb-api pr inline [--old] <id> <path> <line> <text>"
     local pr_id="$1"
+    require_numeric "PR id" "$pr_id"
     local path="$2"
     local line="$3"
     [[ "$line" =~ ^[0-9]+$ ]] || die "Line must be a number, got: $line"
     shift 3
     local text="$*"
     [[ -n "$text" ]] || die "Comment text is required"
-    api_post "/pullrequests/${pr_id}/comments" \
-        "{\"content\": {\"raw\": $(printf '%s' "$text" | jq -Rs .)}, \"inline\": {\"path\": $(printf '%s' "$path" | jq -Rs .), \"to\": ${line}}}" \
-        | jq -r '"Inline comment posted: \(.inline.path):\(.inline.to) - \(.links.html.href // "ok")"'
-}
-
-cmd_pr_inline_old() {
-    local pr_id="$1"
-    local path="$2"
-    local line="$3"
-    [[ "$line" =~ ^[0-9]+$ ]] || die "Line must be a number, got: $line"
-    shift 3
-    local text="$*"
-    [[ -n "$text" ]] || die "Comment text is required"
-    api_post "/pullrequests/${pr_id}/comments" \
-        "{\"content\": {\"raw\": $(printf '%s' "$text" | jq -Rs .)}, \"inline\": {\"path\": $(printf '%s' "$path" | jq -Rs .), \"from\": ${line}}}" \
-        | jq -r '"Inline comment posted (old): \(.inline.path):\(.inline.from) - \(.links.html.href // "ok")"'
+    # $side is "to" or "from" — set internally above, never user input.
+    # Interpolated into the jq filter literal because jq has no clean dynamic-key form.
+    local payload
+    payload=$(jq -nc --arg text "$text" --arg path "$path" --argjson line "$line" \
+        "{content: {raw: \$text}, inline: {path: \$path, ${side}: \$line}}")
+    api_post "/pullrequests/${pr_id}/comments" "$payload" \
+        | jq -r '"Inline comment posted: \(.inline.path):\(.inline.to // .inline.from) - \(.links.html.href // "ok")"'
 }
 
 cmd_pr_approve() {
+    require_args 1 $# "Usage: bb-api pr approve <id> [id ...]"
+    batch_action "approved by" "/pullrequests/{id}/approve" '.user.display_name // "ok"' "$@"
+}
+
+cmd_pr_decline() {
+    require_args 1 $# "Usage: bb-api pr decline <id> [id ...]"
+    batch_action "declined" "/pullrequests/{id}/decline" '.state // "DECLINED"' "$@"
+}
+
+# pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=<text>]
+# Default strategy: merge_commit (Bitbucket's most common UI default).
+# Explicit override via flags. No repo-default fetch (the API field
+# `.mainbranch.merge_commit_default` does not exist).
+cmd_pr_merge() {
+    require_args 1 $# "Usage: bb-api pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=<text>]"
     local pr_id="$1"
-    api_post "/pullrequests/${pr_id}/approve" "{}" \
-        | jq -r '"Approved by: \(.user.display_name // "ok")"'
+    require_numeric "PR id" "$pr_id"
+    shift
+    local strategy="merge_commit" close_source="false" message=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --squash)         strategy="squash" ;;
+            --commit)         strategy="merge_commit" ;;
+            --ff)             strategy="fast_forward" ;;
+            --delete-branch)  close_source="true" ;;
+            --message=*)      message="${1#--message=}" ;;
+            *)                die "Unknown flag: $1" ;;
+        esac
+        shift
+    done
+
+    # Bitbucket Cloud uses field name `type` (not `merge_strategy`) for the
+    # merge endpoint payload.
+    local payload
+    payload=$(jq -nc \
+        --arg type "$strategy" \
+        --argjson close "$close_source" \
+        --arg msg "$message" \
+        '{type: $type, close_source_branch: $close} + (if $msg == "" then {} else {message: $msg} end)')
+
+    local result hash
+    result=$(api_post "/pullrequests/${pr_id}/merge" "$payload")
+    hash=$(echo "$result" | jq -r '.merge_commit.hash // ""' | cut -c1-7)
+    echo "PR #${pr_id} merged${hash:+ ($hash)} — strategy: $strategy"
 }
 
 cmd_pr_reply() {
     local pr_id="$1"
     local comment_id="$2"
+    require_numeric "PR id" "$pr_id"
+    require_numeric "Comment id" "$comment_id"
     shift 2
     local text="$*"
     [[ -n "$text" ]] || die "Reply text is required"
-    api_post "/pullrequests/${pr_id}/comments" \
-        "{\"content\": {\"raw\": $(printf '%s' "$text" | jq -Rs .)}, \"parent\": {\"id\": ${comment_id}}}" \
+    local payload
+    payload=$(jq -nc --arg text "$text" --argjson cid "$comment_id" \
+        '{content: {raw: $text}, parent: {id: $cid}}')
+    api_post "/pullrequests/${pr_id}/comments" "$payload" \
         | jq -r '"Reply posted to #\(.parent.id): \(.links.html.href // "ok")"'
 }
 
 cmd_pr_edit_comment() {
     local pr_id="$1"
     local comment_id="$2"
+    require_numeric "PR id" "$pr_id"
+    require_numeric "Comment id" "$comment_id"
     shift 2
     local text="$*"
     [[ -n "$text" ]] || die "Comment text is required"
-    api_put "/pullrequests/${pr_id}/comments/${comment_id}" \
-        "{\"content\": {\"raw\": $(printf '%s' "$text" | jq -Rs .)}}" \
+    local payload
+    payload=$(jq -nc --arg text "$text" '{content: {raw: $text}}')
+    api_put "/pullrequests/${pr_id}/comments/${comment_id}" "$payload" \
         | jq -r '"Comment #\(.id) updated: \(.links.html.href // "ok")"'
 }
 
 cmd_pr_delete_comment() {
     local pr_id="$1"
     local comment_id="$2"
+    require_numeric "PR id" "$pr_id"
+    require_numeric "Comment id" "$comment_id"
     local status
     status=$(api_delete "/pullrequests/${pr_id}/comments/${comment_id}")
     if [[ "$status" == "204" ]]; then
@@ -271,30 +628,33 @@ usage() {
     echo "bb-api - Bitbucket API wrapper for ${WORKSPACE}/${REPO}"
     echo ""
     echo "Usage:"
-    echo "  bb-api pr list                                  List open PRs"
+    echo "  bb-api pr list [--state=open|merged|declined|superseded|all] [--author=<user>]   List PRs"
     echo "  bb-api pr create <target> <title> [desc]        Create PR from current branch"
+    echo "  bb-api pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2]  Update PR metadata"
     echo "  bb-api pr show <id>                             PR details + changed files"
+    echo "  bb-api pr open <id>                             Open PR in default browser"
     echo "  bb-api pr diff <id>                             Full diff"
+    echo "  bb-api pr checks <id>                           Show CI statuses + Bitbucket Pipelines"
     echo "  bb-api pr comments <id>                         List comments"
     echo "  bb-api pr comment <id> <text>                   Add general comment"
-    echo "  bb-api pr inline <id> <path> <line> <text>      Inline comment on new code"
-    echo "  bb-api pr inline-old <id> <path> <line> <text>  Inline comment on old code"
-    echo "  bb-api pr approve <id>                          Approve PR"
+    echo "  bb-api pr inline [--old] <id> <path> <line> <text>  Inline comment (default new code, --old for deleted)"
+    echo "  bb-api pr approve <id> [id ...]                 Approve PR, batch-capable"
+    echo "  bb-api pr decline <id> [id ...]                 Decline (close without merge), batch-capable"
+    echo "  bb-api pr merge <id> [--squash|--commit|--ff] [--delete-branch]  Merge PR (default: merge_commit)"
     echo "  bb-api pr reply <pr_id> <comment_id> <text>   Reply to a comment"
     echo "  bb-api pr edit-comment <pr_id> <comment_id> <text>  Edit a comment"
     echo "  bb-api pr delete-comment <pr_id> <comment_id>   Delete a comment"
     echo "  bb-api raw <endpoint>                           Raw GET  (e.g. /pullrequests)"
     echo "  bb-api raw-post <endpoint> <json>               Raw POST"
     echo ""
-    echo "Inline comments:"
-    echo "  'inline'     - comment on a line in the NEW version (added/modified)"
-    echo "  'inline-old' - comment on a line in the OLD version (deleted)"
+    echo "Inline comments: omit --old for new/added lines, include --old for deleted lines."
     echo ""
     echo "Configuration (via .env file or environment variables):"
-    echo "  BB_API_EMAIL      Bitbucket account email (required)"
-    echo "  BB_API_TOKEN      Bitbucket app password   (required)"
-    echo "  BB_API_WORKSPACE  Bitbucket workspace      (required)"
-    echo "  BB_API_REPO       Repository slug          (required)"
+    echo "  BB_API_EMAIL      Bitbucket account email   (required)"
+    echo "  BB_API_TOKEN      Bitbucket API token       (required)"
+    echo "  BB_API_WORKSPACE  Bitbucket workspace       (optional, auto-detected from git remote)"
+    echo "  BB_API_REPO       Repository slug           (optional, auto-detected from git remote)"
+    echo "  BB_API_REMOTE     Git remote name override  (optional, default: scan for bitbucket.org)"
     echo ""
     echo "Copy .env.example to .env and fill in your values."
 }
@@ -318,15 +678,19 @@ main() {
             local subcmd="$1"
             shift
             case "$subcmd" in
-                list)           cmd_pr_list ;;
+                list)           cmd_pr_list "$@" ;;
                 create)         require_args 2 $# "Usage: bb-api pr create <target> <title> [description]"; cmd_pr_create "$@" ;;
+                update)         cmd_pr_update "$@" ;;
                 show)           require_args 1 $# "Usage: bb-api pr show <id>"; cmd_pr_show "$1" ;;
+                open)           cmd_pr_open "$@" ;;
                 diff)           require_args 1 $# "Usage: bb-api pr diff <id>"; cmd_pr_diff "$1" ;;
+                checks)         cmd_pr_checks "$@" ;;
                 comments)       require_args 1 $# "Usage: bb-api pr comments <id>"; cmd_pr_comments "$1" ;;
                 comment)        require_args 2 $# "Usage: bb-api pr comment <id> <text>"; cmd_pr_comment "$@" ;;
-                inline)         require_args 4 $# "Usage: bb-api pr inline <id> <path> <line> <text>"; cmd_pr_inline "$@" ;;
-                inline-old)     require_args 4 $# "Usage: bb-api pr inline-old <id> <path> <line> <text>"; cmd_pr_inline_old "$@" ;;
-                approve)        require_args 1 $# "Usage: bb-api pr approve <id>"; cmd_pr_approve "$1" ;;
+                inline)         cmd_pr_inline "$@" ;;
+                approve)        cmd_pr_approve "$@" ;;
+                decline)        cmd_pr_decline "$@" ;;
+                merge)          cmd_pr_merge "$@" ;;
                 reply)          require_args 3 $# "Usage: bb-api pr reply <pr_id> <comment_id> <text>"; cmd_pr_reply "$@" ;;
                 edit-comment)   require_args 3 $# "Usage: bb-api pr edit-comment <pr_id> <comment_id> <text>"; cmd_pr_edit_comment "$@" ;;
                 delete-comment) require_args 2 $# "Usage: bb-api pr delete-comment <pr_id> <comment_id>"; cmd_pr_delete_comment "$1" "$2" ;;
@@ -340,4 +704,21 @@ main() {
     esac
 }
 
-main "$@"
+# --- Top-level execution ---
+# Run only when executed directly (not when sourced for testing).
+# Test harnesses source bb-api to access function definitions, then set
+# WORKSPACE/REPO/BASE_URL/AUTH manually — see test/test_helper.bash.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    # Load .env from the script's directory (kept inside the guard so test
+    # harnesses that source bb-api don't inherit developer credentials).
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # shellcheck source=/dev/null
+    [[ -f "${SCRIPT_DIR}/.env" ]] && source "${SCRIPT_DIR}/.env"
+
+    BB_API_EMAIL="${BB_API_EMAIL:?BB_API_EMAIL is required (set in .env or environment)}"
+    BB_API_TOKEN="${BB_API_TOKEN:?BB_API_TOKEN is required (set in .env or environment)}"
+    resolve_workspace_repo
+    BASE_URL="https://api.bitbucket.org/2.0/repositories/${WORKSPACE}/${REPO}"
+    AUTH="${BB_API_EMAIL}:${BB_API_TOKEN}"
+    main "$@"
+fi

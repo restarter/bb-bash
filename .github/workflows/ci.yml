@@ -1,0 +1,42 @@
+name: CI
+
+# Zero token permissions — neither job needs the GITHUB_TOKEN
+permissions: {}
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+      - name: Run shellcheck
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38  # 2.0.0
+        with:
+          # Lint bb-api and test_helper.bash only. Skip .bats files
+          # (they use @test syntax that shellcheck doesn't parse).
+          additional_files: 'bb-api test/test_helper.bash'
+          ignore_paths: 'test'
+
+  bats:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Install bats-core 1.11.0
+        # SHA-pinned (resolved from annotated tag v1.11.0 via gh api).
+        # Apt's 'bats' is the unmaintained 0.4 line — installing from
+        # upstream gets the bats-core 1.x line our tests target.
+        run: |
+          git clone https://github.com/bats-core/bats-core.git /tmp/bats
+          git -C /tmp/bats checkout 5da66876b8b619235aee1eb3e54954eaca88059b  # v1.11.0
+          sudo /tmp/bats/install.sh /usr/local
+      - name: Run bats tests (excluding test_live.bats — gated by BB_API_TEST_LIVE)
+        run: bats test/test_helpers.bats test/test_pr_commands.bats
