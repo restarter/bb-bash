@@ -52,3 +52,12 @@
 # - linear.api-key
 # - github.org
 # - github.repo
+
+no-git-ops: true
+
+# .beads/ is gitignored, so bd's default `git add issues.jsonl` would fail and warn.
+export:
+  git-add: false
+
+backup:
+  enabled: false

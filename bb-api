@@ -1,0 +1,343 @@
+#!/usr/bin/env bash
+#
+# bb-api - Bitbucket Cloud API wrapper
+#
+# Reads credentials from .env file next to this script.
+# Copy .env.example to .env and fill in your values.
+#
+# Usage:
+#   bb-api pr list                                    - List open PRs
+#   bb-api pr create <target> <title> [description]   - Create PR from current branch
+#   bb-api pr show <id>                               - PR details (title, author, files)
+#   bb-api pr diff <id>                               - Full diff
+#   bb-api pr comments <id>                           - List PR comments
+#   bb-api pr comment <id> <text>                     - Add general comment to PR
+#   bb-api pr inline <id> <path> <line> <text>        - Inline comment on file:line
+#   bb-api pr inline-old <id> <path> <line> <text>    - Inline comment on deleted line
+#   bb-api pr approve <id>                            - Approve PR
+#   bb-api pr reply <pr_id> <comment_id> <text>       - Reply to a comment
+#   bb-api pr edit-comment <pr_id> <comment_id> <text> - Edit a comment
+#   bb-api pr delete-comment <pr_id> <comment_id>     - Delete a comment
+#   bb-api raw <endpoint>                             - Raw API call (GET)
+#   bb-api raw-post <endpoint> <json>                 - Raw API call (POST)
+
+set -euo pipefail
+
+# --- Load .env ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -f "${SCRIPT_DIR}/.env" ]] && source "${SCRIPT_DIR}/.env"
+
+# --- Config ---
+BB_API_EMAIL="${BB_API_EMAIL:?BB_API_EMAIL is required (set in .env or environment)}"
+BB_API_TOKEN="${BB_API_TOKEN:?BB_API_TOKEN is required (set in .env or environment)}"
+WORKSPACE="${BB_API_WORKSPACE:?BB_API_WORKSPACE is required (set in .env or environment)}"
+REPO="${BB_API_REPO:?BB_API_REPO is required (set in .env or environment)}"
+BASE_URL="https://api.bitbucket.org/2.0/repositories/${WORKSPACE}/${REPO}"
+AUTH="${BB_API_EMAIL}:${BB_API_TOKEN}"
+
+# --- Helpers ---
+die() { echo "Error: $*" >&2; exit 1; }
+
+require_args() {
+    local need="$1" have="$2" msg="$3"
+    [[ "$have" -ge "$need" ]] || die "$msg"
+}
+
+api_get() {
+    local endpoint="$1"
+    local url="${BASE_URL}${endpoint}"
+    local response http_code body
+    response=$(curl -s -L -w "\n%{http_code}" -u "${AUTH}" "$url")
+    http_code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
+    if [[ "$http_code" -ge 400 ]]; then
+        local msg
+        msg=$(echo "$body" | jq -r '.error.message // .error // empty' 2>/dev/null || echo "$body")
+        die "API error (HTTP $http_code): ${msg:-$body}"
+    fi
+    echo "$body"
+}
+
+api_post() {
+    local endpoint="$1"
+    local data="$2"
+    local url="${BASE_URL}${endpoint}"
+    local response http_code body
+    response=$(curl -s -w "\n%{http_code}" -u "${AUTH}" \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -d "$data" \
+        "$url")
+    http_code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
+    if [[ "$http_code" -ge 400 ]]; then
+        local msg
+        msg=$(echo "$body" | jq -r '.error.message // .error // empty' 2>/dev/null || echo "$body")
+        die "API error (HTTP $http_code): ${msg:-$body}"
+    fi
+    echo "$body"
+}
+
+api_put() {
+    local endpoint="$1"
+    local data="$2"
+    local url="${BASE_URL}${endpoint}"
+    local response http_code body
+    response=$(curl -s -w "\n%{http_code}" -u "${AUTH}" \
+        -X PUT \
+        -H "Content-Type: application/json" \
+        -d "$data" \
+        "$url")
+    http_code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
+    if [[ "$http_code" -ge 400 ]]; then
+        local msg
+        msg=$(echo "$body" | jq -r '.error.message // .error // empty' 2>/dev/null || echo "$body")
+        die "API error (HTTP $http_code): ${msg:-$body}"
+    fi
+    echo "$body"
+}
+
+api_delete() {
+    local endpoint="$1"
+    local url="${BASE_URL}${endpoint}"
+    curl -s -o /dev/null -w "%{http_code}" -u "${AUTH}" \
+        -X DELETE \
+        "$url"
+}
+
+# --- Commands ---
+cmd_pr_list() {
+    api_get "/pullrequests?state=OPEN" | jq -r '
+        .values[] | "PR #\(.id) [\(.state)] \(.title)\n  Author: \(.author.display_name)\n  Branch: \(.source.branch.name) -> \(.destination.branch.name)\n"'
+}
+
+cmd_pr_create() {
+    local target="$1"
+    local title="$2"
+    shift 2
+    local description="${*:-}"
+
+    [[ -n "$target" ]] || die "Target branch is required"
+    [[ -n "$title" ]] || die "Title is required"
+
+    local source
+    source=$(git -C "$(pwd)" symbolic-ref --short HEAD 2>/dev/null) \
+        || die "Cannot detect current git branch (run from inside the repo)"
+
+    if [[ "$source" == "$target" ]]; then
+        die "Source and target are the same branch: $source"
+    fi
+
+    local payload
+    payload=$(jq -nc \
+        --arg title "$title" \
+        --arg desc "$description" \
+        --arg src "$source" \
+        --arg dst "$target" \
+        '{title: $title, description: $desc, source: {branch: {name: $src}}, destination: {branch: {name: $dst}}}')
+
+    api_post "/pullrequests" "$payload" \
+        | jq -r '"PR #\(.id) created: \(.links.html.href)"'
+}
+
+cmd_pr_show() {
+    local pr_id="$1"
+    local pr
+    pr=$(api_get "/pullrequests/${pr_id}")
+
+    echo "$pr" | jq -r '"PR #\(.id): \(.title)
+State:       \(.state)
+Author:      \(.author.display_name)
+Branch:      \(.source.branch.name) -> \(.destination.branch.name)
+Created:     \(.created_on // "n/a")
+Updated:     \(.updated_on // "n/a")
+Description: \(.description // "(none)")
+Link:        \(.links.html.href // "n/a")"'
+
+    echo ""
+    echo "--- Changed files ---"
+    api_get "/pullrequests/${pr_id}/diffstat" | jq -r '
+        .values[] | "\(.status | if . == "added" then "+" elif . == "removed" then "-" else "M" end) \(.new.path // .old.path)  (+\(.lines_added) -\(.lines_removed))"'
+}
+
+cmd_pr_diff() {
+    local pr_id="$1"
+    curl -s -L -u "${AUTH}" \
+        -H "Accept: text/plain" \
+        "${BASE_URL}/pullrequests/${pr_id}/diff"
+}
+
+cmd_pr_comments() {
+    local pr_id="$1"
+    api_get "/pullrequests/${pr_id}/comments?pagelen=100" | jq -r '
+        .values[]
+        | select(.deleted != true)
+        | "[#\(.id)] [\(.created_on[:16])] \(.user.display_name)" +
+          (if .inline then " @ \(.inline.path):\(.inline.to // .inline.from)" else "" end) +
+          (if .parent then " (reply to #\(.parent.id))" else "" end) +
+          ":\n\(.content.raw)\n---"'
+}
+
+cmd_pr_comment() {
+    local pr_id="$1"
+    shift
+    local text="$*"
+    [[ -n "$text" ]] || die "Comment text is required"
+    api_post "/pullrequests/${pr_id}/comments" \
+        "{\"content\": {\"raw\": $(printf '%s' "$text" | jq -Rs .)}}" \
+        | jq -r '"Comment posted: \(.links.html.href // "ok")"'
+}
+
+cmd_pr_inline() {
+    local pr_id="$1"
+    local path="$2"
+    local line="$3"
+    [[ "$line" =~ ^[0-9]+$ ]] || die "Line must be a number, got: $line"
+    shift 3
+    local text="$*"
+    [[ -n "$text" ]] || die "Comment text is required"
+    api_post "/pullrequests/${pr_id}/comments" \
+        "{\"content\": {\"raw\": $(printf '%s' "$text" | jq -Rs .)}, \"inline\": {\"path\": $(printf '%s' "$path" | jq -Rs .), \"to\": ${line}}}" \
+        | jq -r '"Inline comment posted: \(.inline.path):\(.inline.to) - \(.links.html.href // "ok")"'
+}
+
+cmd_pr_inline_old() {
+    local pr_id="$1"
+    local path="$2"
+    local line="$3"
+    [[ "$line" =~ ^[0-9]+$ ]] || die "Line must be a number, got: $line"
+    shift 3
+    local text="$*"
+    [[ -n "$text" ]] || die "Comment text is required"
+    api_post "/pullrequests/${pr_id}/comments" \
+        "{\"content\": {\"raw\": $(printf '%s' "$text" | jq -Rs .)}, \"inline\": {\"path\": $(printf '%s' "$path" | jq -Rs .), \"from\": ${line}}}" \
+        | jq -r '"Inline comment posted (old): \(.inline.path):\(.inline.from) - \(.links.html.href // "ok")"'
+}
+
+cmd_pr_approve() {
+    local pr_id="$1"
+    api_post "/pullrequests/${pr_id}/approve" "{}" \
+        | jq -r '"Approved by: \(.user.display_name // "ok")"'
+}
+
+cmd_pr_reply() {
+    local pr_id="$1"
+    local comment_id="$2"
+    shift 2
+    local text="$*"
+    [[ -n "$text" ]] || die "Reply text is required"
+    api_post "/pullrequests/${pr_id}/comments" \
+        "{\"content\": {\"raw\": $(printf '%s' "$text" | jq -Rs .)}, \"parent\": {\"id\": ${comment_id}}}" \
+        | jq -r '"Reply posted to #\(.parent.id): \(.links.html.href // "ok")"'
+}
+
+cmd_pr_edit_comment() {
+    local pr_id="$1"
+    local comment_id="$2"
+    shift 2
+    local text="$*"
+    [[ -n "$text" ]] || die "Comment text is required"
+    api_put "/pullrequests/${pr_id}/comments/${comment_id}" \
+        "{\"content\": {\"raw\": $(printf '%s' "$text" | jq -Rs .)}}" \
+        | jq -r '"Comment #\(.id) updated: \(.links.html.href // "ok")"'
+}
+
+cmd_pr_delete_comment() {
+    local pr_id="$1"
+    local comment_id="$2"
+    local status
+    status=$(api_delete "/pullrequests/${pr_id}/comments/${comment_id}")
+    if [[ "$status" == "204" ]]; then
+        echo "Comment ${comment_id} deleted"
+    else
+        echo "Failed to delete comment ${comment_id} (HTTP ${status})"
+    fi
+}
+
+cmd_raw() {
+    local endpoint="$1"
+    api_get "$endpoint" | jq '.'
+}
+
+cmd_raw_post() {
+    local endpoint="$1"
+    local data="$2"
+    api_post "$endpoint" "$data" | jq '.'
+}
+
+# --- Help ---
+usage() {
+    echo "bb-api - Bitbucket API wrapper for ${WORKSPACE}/${REPO}"
+    echo ""
+    echo "Usage:"
+    echo "  bb-api pr list                                  List open PRs"
+    echo "  bb-api pr create <target> <title> [desc]        Create PR from current branch"
+    echo "  bb-api pr show <id>                             PR details + changed files"
+    echo "  bb-api pr diff <id>                             Full diff"
+    echo "  bb-api pr comments <id>                         List comments"
+    echo "  bb-api pr comment <id> <text>                   Add general comment"
+    echo "  bb-api pr inline <id> <path> <line> <text>      Inline comment on new code"
+    echo "  bb-api pr inline-old <id> <path> <line> <text>  Inline comment on old code"
+    echo "  bb-api pr approve <id>                          Approve PR"
+    echo "  bb-api pr reply <pr_id> <comment_id> <text>   Reply to a comment"
+    echo "  bb-api pr edit-comment <pr_id> <comment_id> <text>  Edit a comment"
+    echo "  bb-api pr delete-comment <pr_id> <comment_id>   Delete a comment"
+    echo "  bb-api raw <endpoint>                           Raw GET  (e.g. /pullrequests)"
+    echo "  bb-api raw-post <endpoint> <json>               Raw POST"
+    echo ""
+    echo "Inline comments:"
+    echo "  'inline'     - comment on a line in the NEW version (added/modified)"
+    echo "  'inline-old' - comment on a line in the OLD version (deleted)"
+    echo ""
+    echo "Configuration (via .env file or environment variables):"
+    echo "  BB_API_EMAIL      Bitbucket account email (required)"
+    echo "  BB_API_TOKEN      Bitbucket app password   (required)"
+    echo "  BB_API_WORKSPACE  Bitbucket workspace      (required)"
+    echo "  BB_API_REPO       Repository slug          (required)"
+    echo ""
+    echo "Copy .env.example to .env and fill in your values."
+}
+
+# --- Router ---
+main() {
+    if [[ $# -lt 1 ]]; then
+        usage
+        exit 0
+    fi
+
+    local cmd="$1"
+    shift
+
+    case "$cmd" in
+        pr)
+            if [[ $# -lt 1 ]]; then
+                usage
+                exit 1
+            fi
+            local subcmd="$1"
+            shift
+            case "$subcmd" in
+                list)           cmd_pr_list ;;
+                create)         require_args 2 $# "Usage: bb-api pr create <target> <title> [description]"; cmd_pr_create "$@" ;;
+                show)           require_args 1 $# "Usage: bb-api pr show <id>"; cmd_pr_show "$1" ;;
+                diff)           require_args 1 $# "Usage: bb-api pr diff <id>"; cmd_pr_diff "$1" ;;
+                comments)       require_args 1 $# "Usage: bb-api pr comments <id>"; cmd_pr_comments "$1" ;;
+                comment)        require_args 2 $# "Usage: bb-api pr comment <id> <text>"; cmd_pr_comment "$@" ;;
+                inline)         require_args 4 $# "Usage: bb-api pr inline <id> <path> <line> <text>"; cmd_pr_inline "$@" ;;
+                inline-old)     require_args 4 $# "Usage: bb-api pr inline-old <id> <path> <line> <text>"; cmd_pr_inline_old "$@" ;;
+                approve)        require_args 1 $# "Usage: bb-api pr approve <id>"; cmd_pr_approve "$1" ;;
+                reply)          require_args 3 $# "Usage: bb-api pr reply <pr_id> <comment_id> <text>"; cmd_pr_reply "$@" ;;
+                edit-comment)   require_args 3 $# "Usage: bb-api pr edit-comment <pr_id> <comment_id> <text>"; cmd_pr_edit_comment "$@" ;;
+                delete-comment) require_args 2 $# "Usage: bb-api pr delete-comment <pr_id> <comment_id>"; cmd_pr_delete_comment "$1" "$2" ;;
+                *)              usage; exit 1 ;;
+            esac
+            ;;
+        raw)      require_args 1 $# "Usage: bb-api raw <endpoint>"; cmd_raw "$1" ;;
+        raw-post) require_args 2 $# "Usage: bb-api raw-post <endpoint> <json>"; cmd_raw_post "$1" "$2" ;;
+        help)     usage ;;
+        *)        usage; exit 1 ;;
+    esac
+}
+
+main "$@"
