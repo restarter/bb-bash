@@ -1,6 +1,6 @@
 # bb-api - Bitbucket Cloud API CLI
 
-Shell wrapper for Bitbucket Cloud REST API 2.0.
+Bitbucket Cloud CLI built for AI coding agents. Single-file bash wrapper over the REST API 2.0, with CLAUDE.md snippet, Claude Code rule, and Claude Code skill bundled out of the box.
 
 ## Install
 
@@ -128,7 +128,47 @@ BB_API_REMOTE=bb bb-api pr list    # use 'bb' remote instead of 'origin'
 
 ## For AI agents
 
-Drop [docs/CLAUDE.md.example](docs/CLAUDE.md.example) into your project's `CLAUDE.md` so Claude / Cursor / etc. know how to use bb-api.
+Three drop-in integrations, pick what fits your stack:
+
+| Artifact | Where it goes | Loading | Best for |
+|---|---|---|---|
+| [`docs/CLAUDE.md.example`](docs/CLAUDE.md.example) | paste into project's `CLAUDE.md` | always in context | Cursor, Copilot, mixed-tool teams, any agent that reads CLAUDE.md |
+| [`docs/bb-api-rule.md`](docs/bb-api-rule.md) | copy to `.claude/rules/bb-api-rule.md` | auto-loaded by Claude Code | short always-on hint for Claude Code-native projects |
+| [`docs/bb-api-skill/SKILL.md`](docs/bb-api-skill/SKILL.md) | copy to `.claude/skills/bb-api/SKILL.md` | lazy-loaded on Claude Code skill invocation | full workflow guide with zero context cost until invoked |
+
+### One-shot install
+
+If you already have `bb-api` on your PATH (after running the install one-liner above), run this from inside any project:
+
+```bash
+bb-api install-agent                                       # interactive — pick which artifacts
+bb-api install-agent --rule --skill --claudemd --agents    # all four at once
+bb-api install-agent --rule --dry-run                      # preview, no writes
+```
+
+Idempotent — re-run is safe (skips existing files). Use `--force` to overwrite existing artifacts or re-append to `CLAUDE.md`/`AGENTS.md`. Use `BB_API_REF=v0.1.2 bb-api install-agent ...` to pin artifacts to a release tag instead of fetching from `main`.
+
+### Manual install (without bb-api on PATH)
+
+Quick install of the Claude Code rule into the current project:
+
+```bash
+mkdir -p .claude/rules
+curl --proto '=https' --tlsv1.2 -fsSL \
+    https://raw.githubusercontent.com/restarter/bb-api/main/docs/bb-api-rule.md \
+    -o .claude/rules/bb-api-rule.md
+```
+
+Quick install of the skill:
+
+```bash
+mkdir -p .claude/skills/bb-api
+curl --proto '=https' --tlsv1.2 -fsSL \
+    https://raw.githubusercontent.com/restarter/bb-api/main/docs/bb-api-skill/SKILL.md \
+    -o .claude/skills/bb-api/SKILL.md
+```
+
+Rule + skill can coexist — the rule tells the agent bb-api exists; the skill loads the full command reference only when needed.
 
 ## Authentication notes
 
