@@ -1,0 +1,10 @@
+{
+  "enabledPlugins": {
+    "lets@lets-workflow": true
+  },
+  "hooks": {},
+  "statusLine": {
+    "command": "lets statusline",
+    "type": "command"
+  }
+}
