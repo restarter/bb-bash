@@ -268,3 +268,24 @@ load_install_sh() {
     [ "$status" -eq 0 ]
     [ -z "$output" ]
 }
+
+# --- entry-point guard (regression: bb-api-bhf) ---
+
+@test "install.sh: BASH_SOURCE guard survives stdin pipe (curl|bash) under set -u" {
+    # Regression for bb-api-bhf — `curl ... | bash` failed because the
+    # entry-point guard `[[ "${BASH_SOURCE[0]}" == "${0}" ]]` dereferenced
+    # an empty array under `set -u` and aborted before main ran.
+    #
+    # We simulate the curl-pipe by feeding install.sh through stdin.
+    # The main-call line is stripped so the test exercises ONLY the guard
+    # condition — not the actual installer (which would mutate ~/.local).
+    # If the guard line trips `set -u`, this produces "unbound variable"
+    # and a non-zero exit.
+    # Replace the main-call line with `:` (no-op) — deleting it would leave
+    # an empty then/fi block which is a bash syntax error.
+    sed 's|^    _bb_api_install_main "\$@"$|    :|' "$INSTALL_SH" > "$TEST_TMP/no_main.sh"
+    run bash < "$TEST_TMP/no_main.sh"
+    [ "$status" -eq 0 ]
+    not_contains "$output" "*unbound variable*"
+    not_contains "$output" "*BASH_SOURCE*"
+}

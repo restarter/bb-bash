@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-27
+
+### Fixed
+- `scripts/install.sh` failed under `curl --proto '=https' --tlsv1.2 -fsSL ... | bash` with `BASH_SOURCE[0]: unbound variable` because the entry-point guard dereferenced an empty array under `set -u`. Replaced `${BASH_SOURCE[0]}` with `${BASH_SOURCE[0]:-$0}` so the guard works in both direct-invoke and stdin-pipe modes. Added a bats regression test (`test/test_install_helpers.bats`) that feeds the script via stdin and asserts the guard does not trip `set -u`. (bb-api-bhf)
+
 ### Added
 - `scripts/install.sh` — one-line curl-pipe-bash installer:
   `curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/restarter/bb-api/main/scripts/install.sh | bash`

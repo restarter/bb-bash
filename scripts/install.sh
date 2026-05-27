@@ -357,7 +357,12 @@ _bb_api_install_main() {
     final_message "$TAG"
 }
 
-# Run only when executed directly. Tests source this file to exercise helpers.
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+# Run only when executed directly OR when read from stdin (curl | bash).
+# Tests source this file to exercise helpers — in that case BASH_SOURCE[0]
+# points at the file path and $0 is the test runner, so this guard skips main.
+# Under stdin-pipe (curl | bash), BASH_SOURCE is empty; ${...:-$0} substitutes
+# $0 ("bash") so the comparison succeeds and main runs. Without the :-$0 the
+# bare ${BASH_SOURCE[0]} triggers `set -u` "unbound variable" before main.
+if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
     _bb_api_install_main "$@"
 fi
