@@ -92,6 +92,42 @@ Set env vars or run from a directory inside a bitbucket.org repo."
 # --- Helpers ---
 die() { echo "Error: $*" >&2; exit 1; }
 
+# resolve_script_dir: print the directory containing the *real* bb-api script,
+# resolving any chain of symlinks portably (no `readlink -f` / `realpath` —
+# macOS bash 3.2 only has BSD readlink). Used at startup to anchor .env
+# discovery to the real script location, not the directory of the symlink it
+# was invoked through. Defined here in Helpers (not inside the BASH_SOURCE
+# guard) so tests can source bb-api and exercise this function directly
+# without firing main().
+#
+# Bails via `die` on cycle (40-hop cap) or broken-symlink (resolved target's
+# parent directory doesn't exist). Uses logical `pwd`, not `pwd -P`, so
+# symlinks in the parent directory chain are preserved — only the script
+# file's own symlink hops are resolved.
+resolve_script_dir() {
+    # `${1-default}` (no colon) substitutes only when $1 is UNSET; an explicit
+    # empty string ("") falls through to the guard below so caller bugs like
+    # `resolve_script_dir "$(cmd_that_returned_empty)"` fail loudly.
+    local target=${1-${BASH_SOURCE[0]}}
+    [[ -n "$target" ]] || die "resolve_script_dir: empty target"
+    local link hops=0
+    while [[ -L "$target" ]]; do
+        hops=$((hops + 1))
+        if [ "$hops" -gt 40 ]; then
+            die "too many symlink hops resolving $target (cycle?)"
+        fi
+        link=$(readlink -- "$target")
+        case "$link" in
+            /*) target="$link" ;;
+            *)  target="$(dirname -- "$target")/$link" ;;
+        esac
+    done
+    local dir
+    dir=$(dirname -- "$target")
+    [[ -d "$dir" ]] || die "cannot resolve bb-api source: $target (broken symlink?)"
+    cd -- "$dir" && pwd
+}
+
 require_args() {
     local need="$1" have="$2" msg="$3"
     [[ "$have" -ge "$need" ]] || die "$msg"
@@ -709,9 +745,10 @@ main() {
 # Test harnesses source bb-api to access function definitions, then set
 # WORKSPACE/REPO/BASE_URL/AUTH manually — see test/test_helper.bash.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    # Load .env from the script's directory (kept inside the guard so test
-    # harnesses that source bb-api don't inherit developer credentials).
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # Load .env from the script's REAL directory (resolved through any number
+    # of symlink hops by resolve_script_dir in Helpers). Kept inside the guard
+    # so test harnesses that source bb-api don't inherit developer credentials.
+    SCRIPT_DIR=$(resolve_script_dir)
     # shellcheck source=/dev/null
     [[ -f "${SCRIPT_DIR}/.env" ]] && source "${SCRIPT_DIR}/.env"
 

@@ -9,7 +9,7 @@ bb-api is one executable script. Dependencies: `curl`, `jq`. No build step, no p
 The script is divided into clearly-labeled sections (line numbers shift over time — refer by label):
 
 1. **Usage docstring** — header comment doubles as inline help
-2. **Helpers** — `die`, `require_args`, `resolve_workspace_repo`, `batch_action`
+2. **Helpers** — `die`, `resolve_script_dir`, `require_args`, `resolve_workspace_repo`, `batch_action`. `resolve_script_dir` is defined here (not in the top-level guard) so tests can source bb-api and exercise it directly; it anchors `.env` discovery to the real script directory by following symlinks portably (no `readlink -f`).
 3. **API helpers** — `api_get`, `api_post` (both with `--soft`), `api_put`, `api_delete`
 4. **Commands** — `cmd_pr_*`, `cmd_raw*` functions
 5. **`usage()`** — printed help text
@@ -55,7 +55,7 @@ The check `[[ "$url" =~ (^|@|/)bitbucket\.org[:/] ]]` uses anchored regex to rej
 
 | Source | Purpose | Precedence |
 |---|---|---|
-| `.env` next to script | email/token (rarely changes) | Loaded first if file exists |
+| `.env` next to the real script (symlinks resolved via `resolve_script_dir`) | email/token (rarely changes) | Loaded first if file exists |
 | Shell env vars | Override for one-off invocations | Overrides `.env` |
 | `git remote` URLs (via `resolve_workspace_repo`) | Workspace/repo per cwd | Last resort, only if no env override |
 

@@ -22,12 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI: SHA-pinned shellcheck + bats-core 1.11.0 on push/PR
 - `docs/` folder: `commands.md`, `design.md`, `contributing.md`, `CLAUDE.md.example`
 - Project `CLAUDE.md`: filled-in Build & Test, Architecture, Conventions sections
+- `resolve_script_dir()` helper in `bb-api` — portable, cycle-safe symlink resolution (macOS bash 3.2 compatible; no `readlink -f` / `realpath` needed). Refuses cycles via a 40-hop cap; dies with a contextual message on broken symlinks; uses logical `pwd` so symlinks in the parent directory chain are preserved.
 
 ### Changed
 - **BREAKING:** `pr approve <id>` now accepts 1+ IDs (batch); per-PR output line instead of single-line summary
 - **BREAKING:** `pr inline-old` removed; use `pr inline --old <id> <path> <line> <text>` instead
 - **BREAKING:** `BB_API_WORKSPACE` and `BB_API_REPO` no longer required at load time — auto-detected from git remote. Still accepted as env-var override for invocations outside a git repo (or to force a specific repo)
 - `.env.example` slimmed to credentials (`BB_API_EMAIL`, `BB_API_TOKEN`) + optional `BB_API_REMOTE`
+- `bb-api` `SCRIPT_DIR` now resolves symlinks before computing the script's directory, so `.env` discovery works when bb-api is invoked through a symlink (e.g. `/usr/local/bin/bb-api -> ~/.local/share/bb-api/bb-api`). Existing direct invocations (cloned-into-place install, tests sourcing bb-api) behave identically — only the symlink path changes.
 
 ### Known limitations
 - `pr list --reviewer=<user>` not implemented in this release: Bitbucket BBQL doesn't support `reviewers.username` filtering. Workaround: filter the output of `pr list` with `jq`. Tracked in bb-api-oja.

@@ -72,7 +72,7 @@ CI: see `.github/workflows/ci.yml` — runs shellcheck + bats on push/PR (SHA-pi
 Single-file bash script (`bb-api`), divided into clearly-labeled sections. See [docs/design.md](docs/design.md) for full details. Quick map:
 
 1. Usage docstring (header comment)
-2. Helpers (`die`, `require_args`, `resolve_workspace_repo`, `batch_action`)
+2. Helpers (`die`, `resolve_script_dir`, `require_args`, `resolve_workspace_repo`, `batch_action`)
 3. API helpers (`api_get`, `api_post` with `--soft`; `api_put`, `api_delete`)
 4. Commands (`cmd_pr_*`, `cmd_raw*`)
 5. `usage()`

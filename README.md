@@ -32,7 +32,7 @@ Required scopes:
 
 ### 2. Configure credentials
 
-Edit `.env` next to the script:
+Edit `~/code/bb-api/.env`:
 
 ```bash
 BB_API_EMAIL="your-email@example.com"
