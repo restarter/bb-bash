@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `docs/bb-api-rule.md` — drop-in Claude Code rule (`.claude/rules/bb-api-rule.md`) so AI agents auto-discover bb-api as the canonical Bitbucket-PR tool. Short, always-on hint. (bb-api-k9i)
+- `docs/bb-api-skill/SKILL.md` — drop-in Claude Code skill (`.claude/skills/bb-api/SKILL.md`) with full command reference + review/respond/cleanup workflows. Lazy-loaded — zero context cost until invoked. (bb-api-k9i)
+- `bb-api install-agent` subcommand — drops AI-agent integration artifacts into `$PWD` with combinable flags (`--rule`, `--skill`, `--claudemd`, `--agents`). Interactive prompt when no flag is given. `--dry-run` previews without writing; `--force` overwrites/re-appends. `BB_API_REF` env var pins the ref (default `main`). Top-level guard skips auth/repo resolution for this subcommand so it runs without `.env` or outside a Bitbucket repo. (bb-api-k9i)
+- `docs/bb-api-agent-snippet.md` — clean, no-wrapper version of the bb-api CLAUDE.md section. Used by `install-agent --claudemd` / `--agents` as the canonical source. (bb-api-k9i)
+- `stub_curl_download` helper in `test/test_helper.bash` — bats stub for `curl ... -o file` style download (complement to existing `stub_curl` API-call stub). (bb-api-k9i)
+- README "For AI agents" section now lists three integration paths (CLAUDE.md snippet, rule, skill) with copy-paste curl one-liners for the rule and skill, plus a new "One-shot install" section showcasing `bb-api install-agent`.
+
+### Changed
+- README fully reframed around the AI-agent use case. Lead promises "tell your agent → done in a minute"; Quick Start is now a ready-to-paste prompt that walks an AI coding agent through running the installer, dropping integration artifacts, and prompting the user for credentials. Adds a "What ships out of the box" table contrasting CLAUDE.md / AGENTS.md / rule / skill, surfaces the session-restart caveat for rule/skill loading, and moves Security / Limitations / Authentication below the agent flow. Cross-tool focus broadened beyond Claude Code (Cursor, Copilot, Codex, Aider). (bb-api-k9i)
+- `docs/CLAUDE.md.example` refactored from embedded code-fence wrapper into a short pointer document. The canonical snippet now lives in `docs/bb-api-agent-snippet.md`. Cross-links to all three artifact files + recommends `bb-api install-agent`. (bb-api-k9i)
+- `bb-api` top-level guard now short-circuits auth/repo resolution for `install-agent` / `help` subcommands so they run without `.env` or a Bitbucket-repo CWD. `usage()` uses defensive defaults (`${WORKSPACE:-<workspace>}`) so it renders correctly through the short-circuit path. (bb-api-k9i)
+
 ## [0.1.1] - 2026-05-27
 
 ### Fixed

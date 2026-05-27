@@ -31,6 +31,8 @@
 #   bb-api pr delete-comment <pr_id> <comment_id> - Delete a comment
 #   bb-api raw <endpoint>                         - Raw API call (GET)
 #   bb-api raw-post <endpoint> <json>             - Raw API call (POST)
+#   bb-api install-agent [--rule] [--skill] [--claudemd] [--agents]
+#                                                 - Drop AI-agent integration artifacts into $PWD
 
 set -euo pipefail
 
@@ -277,6 +279,116 @@ batch_action() {
             sleep "${BB_API_BATCH_DELAY:-0.3}"
         fi
     done
+}
+
+# _install_agent_fetch <src-rel-path> <dest-abs-or-rel-path>
+# Download docs/<src> from the bb-api repo (ref from BB_API_REF, default main)
+# and write to <dest>. Honors $INSTALL_AGENT_DRY_RUN and $INSTALL_AGENT_FORCE
+# (set by cmd_install_agent before calling).
+_install_agent_fetch() {
+    local src="$1" dest="$2"
+    local ref="${BB_API_REF:-main}"
+    local url="https://raw.githubusercontent.com/restarter/bb-api/${ref}/docs/${src}"
+
+    if [[ "${INSTALL_AGENT_DRY_RUN:-false}" == "true" ]]; then
+        echo "  [dry-run] fetch: $url"
+        echo "  [dry-run]    to: $dest"
+        return 0
+    fi
+
+    if [[ -e "$dest" && "${INSTALL_AGENT_FORCE:-false}" != "true" ]]; then
+        echo "  skip: $dest (exists; use --force to overwrite)"
+        return 0
+    fi
+
+    mkdir -p -- "$(dirname -- "$dest")"
+    if ! curl --proto '=https' --tlsv1.2 -fsSL --max-redirs 5 "$url" -o "$dest"; then
+        die "failed to fetch $url"
+    fi
+    echo "  installed: $dest"
+}
+
+# _install_agent_md_section <dest-file>
+# Append the bb-api agent snippet to <dest-file> (CLAUDE.md or AGENTS.md).
+# Modes:
+#   - dest missing       -> create with snippet
+#   - dest has marker    -> skip (use --force to re-append)
+#   - dest exists no mkr -> append with '---' separator
+_install_agent_md_section() {
+    local dest="$1"
+    local ref="${BB_API_REF:-main}"
+    local url="https://raw.githubusercontent.com/restarter/bb-api/${ref}/docs/bb-api-agent-snippet.md"
+    local marker='## Bitbucket via bb-api'
+
+    if [[ "${INSTALL_AGENT_DRY_RUN:-false}" == "true" ]]; then
+        echo "  [dry-run] fetch: $url"
+        if [[ -f "$dest" ]] && grep -qF "$marker" "$dest"; then
+            echo "  [dry-run]   skip: $dest already contains bb-api section"
+        elif [[ -f "$dest" ]]; then
+            echo "  [dry-run] append to: $dest"
+        else
+            echo "  [dry-run]   create: $dest"
+        fi
+        return 0
+    fi
+
+    if [[ -f "$dest" ]] && grep -qF "$marker" "$dest" && [[ "${INSTALL_AGENT_FORCE:-false}" != "true" ]]; then
+        echo "  skip: $dest already has bb-api section (use --force to re-append)"
+        return 0
+    fi
+
+    local tmp
+    tmp=$(mktemp)
+    if ! curl --proto '=https' --tlsv1.2 -fsSL --max-redirs 5 "$url" -o "$tmp"; then
+        rm -f "$tmp"
+        die "failed to fetch $url"
+    fi
+
+    if [[ -f "$dest" ]]; then
+        # Atomic-ish append: assemble (existing + separator + snippet) in a
+        # tmp file on the same FS, then rename onto $dest. A SIGINT or
+        # disk-full between the partial writes can't leave $dest with a
+        # separator but no snippet — rename either fully succeeds or leaves
+        # the original intact.
+        local merged
+        merged=$(mktemp -- "${dest}.bb-api-XXXXXX")
+        cat -- "$dest" > "$merged"
+        printf '\n\n---\n\n' >> "$merged"
+        cat -- "$tmp" >> "$merged"
+        mv -- "$merged" "$dest"
+        echo "  appended to: $dest"
+    else
+        cp -- "$tmp" "$dest"
+        echo "  created: $dest"
+    fi
+    rm -f -- "$tmp"
+}
+
+# _agent_status_line <path>: print "  [present]" or "  [missing]" + path
+_agent_status_line() {
+    local p="$1"
+    if [[ -e "$p" ]]; then
+        echo "  [present] $p"
+    else
+        echo "  [missing] $p"
+    fi
+}
+
+# _agent_status_line_marked <path> <marker>: like _agent_status_line but
+# distinguishes "file exists with bb-api section" from "file exists but no
+# section yet". Used for CLAUDE.md / AGENTS.md which may pre-exist for
+# other reasons.
+_agent_status_line_marked() {
+    local p="$1" marker="$2"
+    if [[ -f "$p" ]]; then
+        if grep -qF "$marker" "$p"; then
+            echo "  [present] $p (has bb-api section)"
+        else
+            echo "  [no-section] $p (exists, no bb-api section)"
+        fi
+    else
+        echo "  [missing] $p"
+    fi
 }
 
 # --- Commands ---
@@ -671,9 +783,109 @@ cmd_raw_post() {
     api_post "$endpoint" "$data" | jq '.'
 }
 
+# install-agent: drop AI-agent integration artifacts into $PWD.
+# Flags combine; no flag = interactive prompt (letter codes).
+# Unlike pr/raw commands this one doesn't hit Bitbucket and is allowed to
+# run without auth or a Bitbucket-repo CWD — the top-level guard at the
+# bottom of this file short-circuits credential resolution for it.
+cmd_install_agent() {
+    local want_rule=false want_skill=false want_claudemd=false want_agents=false
+    local has_flag=false
+    INSTALL_AGENT_DRY_RUN=false
+    INSTALL_AGENT_FORCE=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --rule)     want_rule=true; has_flag=true ;;
+            --skill)    want_skill=true; has_flag=true ;;
+            --claudemd) want_claudemd=true; has_flag=true ;;
+            --agents)   want_agents=true; has_flag=true ;;
+            --dry-run)  INSTALL_AGENT_DRY_RUN=true ;;
+            --force)    INSTALL_AGENT_FORCE=true ;;
+            -h|--help)
+                cat <<'EOF'
+Usage: bb-api install-agent [--rule] [--skill] [--claudemd] [--agents] [--dry-run] [--force]
+
+Drop AI-agent integration artifacts into the current directory.
+
+Artifacts (combine any subset):
+  --rule       .claude/rules/bb-api-rule.md       (Claude Code, auto-load)
+  --skill      .claude/skills/bb-api/SKILL.md     (Claude Code, lazy-load)
+  --claudemd   ./CLAUDE.md                         (append "## Bitbucket via bb-api" section)
+  --agents     ./AGENTS.md                         (append "## Bitbucket via bb-api" section)
+
+Modifiers:
+  --dry-run    Print actions, do not write to disk
+  --force      Overwrite existing files / re-append to CLAUDE.md/AGENTS.md
+
+Without flags: interactive prompt (enter letter codes like 'rsca').
+
+Env:
+  BB_API_REF   Git ref to fetch artifacts from (default: main).
+               Pin to a release tag for reproducibility, e.g. BB_API_REF=v0.1.2.
+
+Examples:
+  bb-api install-agent --rule --skill
+  bb-api install-agent --claudemd --dry-run
+  BB_API_REF=v0.1.2 bb-api install-agent --rule --skill --agents
+EOF
+                return 0
+                ;;
+            *) die "Unknown flag: $1 (run 'bb-api install-agent --help')" ;;
+        esac
+        shift
+    done
+
+    if [[ "$has_flag" != "true" ]]; then
+        # Under set -e, read -r -p crashes with no message on EOF/closed-stdin
+        # (CI, `bb-api install-agent < /dev/null`, piped non-tty contexts).
+        # Short-circuit with a clear instruction instead.
+        [[ -t 0 ]] || die "no flags provided and stdin is not a tty; specify --rule/--skill/--claudemd/--agents"
+        echo "Project: $PWD"
+        echo "Status:"
+        _agent_status_line ".claude/rules/bb-api-rule.md"
+        _agent_status_line ".claude/skills/bb-api/SKILL.md"
+        _agent_status_line_marked "CLAUDE.md" '## Bitbucket via bb-api'
+        _agent_status_line_marked "AGENTS.md" '## Bitbucket via bb-api'
+        echo ""
+        echo "Install: [r=rule, s=skill, c=CLAUDE.md, a=AGENTS.md, q=quit]"
+        local choice
+        read -r -p "Combine letters (e.g. 'rs', 'ca', 'rsca') or q to quit: " choice
+        if [[ "$choice" == "q" || -z "$choice" ]]; then
+            echo "cancelled"
+            return 0
+        fi
+        # Whitelist-validate before per-letter matching. Without this, any string
+        # containing 'r' (e.g. "hello world") would silently turn on want_rule.
+        [[ "$choice" =~ ^[rsca]+$ ]] || die "invalid letters in '$choice' (allowed: r/s/c/a, or q to quit)"
+        [[ "$choice" == *r* ]] && want_rule=true
+        [[ "$choice" == *s* ]] && want_skill=true
+        [[ "$choice" == *c* ]] && want_claudemd=true
+        [[ "$choice" == *a* ]] && want_agents=true
+    fi
+
+    local mode_label
+    if [[ "$INSTALL_AGENT_DRY_RUN" == "true" ]]; then
+        mode_label="dry-run"
+    else
+        mode_label="live"
+    fi
+    echo "Installing into $PWD ($mode_label, ref=${BB_API_REF:-main})"
+
+    $want_rule     && _install_agent_fetch "bb-api-rule.md"        ".claude/rules/bb-api-rule.md"
+    $want_skill    && _install_agent_fetch "bb-api-skill/SKILL.md" ".claude/skills/bb-api/SKILL.md"
+    $want_claudemd && _install_agent_md_section "CLAUDE.md"
+    $want_agents   && _install_agent_md_section "AGENTS.md"
+
+    echo "Done."
+}
+
 # --- Help ---
 usage() {
-    echo "bb-api - Bitbucket API wrapper for ${WORKSPACE}/${REPO}"
+    # WORKSPACE/REPO may be unset when usage() runs through the short-circuit
+    # path (help / install-agent / -h / --help), which skips resolve_workspace_repo.
+    # Use safe defaults so `bb-api help` works outside a bitbucket.org repo.
+    echo "bb-api - Bitbucket API wrapper for ${WORKSPACE:-<workspace>}/${REPO:-<repo>}"
     echo ""
     echo "Usage:"
     echo "  bb-api pr list [--state=open|merged|declined|superseded|all] [--author=<user>]   List PRs"
@@ -694,6 +906,8 @@ usage() {
     echo "  bb-api pr delete-comment <pr_id> <comment_id>   Delete a comment"
     echo "  bb-api raw <endpoint>                           Raw GET  (e.g. /pullrequests)"
     echo "  bb-api raw-post <endpoint> <json>               Raw POST"
+    echo "  bb-api install-agent [--rule] [--skill] [--claudemd] [--agents] [--dry-run] [--force]"
+    echo "                                                  Drop AI-agent integration artifacts into \$PWD"
     echo ""
     echo "Inline comments: omit --old for new/added lines, include --old for deleted lines."
     echo ""
@@ -703,6 +917,7 @@ usage() {
     echo "  BB_API_WORKSPACE  Bitbucket workspace       (optional, auto-detected from git remote)"
     echo "  BB_API_REPO       Repository slug           (optional, auto-detected from git remote)"
     echo "  BB_API_REMOTE     Git remote name override  (optional, default: scan for bitbucket.org)"
+    echo "  BB_API_REF        Git ref for install-agent (optional, default: main)"
     echo ""
     echo "Copy .env.example to .env and fill in your values."
 }
@@ -745,10 +960,11 @@ main() {
                 *)              usage; exit 1 ;;
             esac
             ;;
-        raw)      require_args 1 $# "Usage: bb-api raw <endpoint>"; cmd_raw "$1" ;;
-        raw-post) require_args 2 $# "Usage: bb-api raw-post <endpoint> <json>"; cmd_raw_post "$1" "$2" ;;
-        help)     usage ;;
-        *)        usage; exit 1 ;;
+        raw)           require_args 1 $# "Usage: bb-api raw <endpoint>"; cmd_raw "$1" ;;
+        raw-post)      require_args 2 $# "Usage: bb-api raw-post <endpoint> <json>"; cmd_raw_post "$1" "$2" ;;
+        install-agent) cmd_install_agent "$@" ;;
+        help)          usage ;;
+        *)             usage; exit 1 ;;
     esac
 }
 
@@ -764,10 +980,19 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     # shellcheck source=/dev/null
     [[ -f "${SCRIPT_DIR}/.env" ]] && source "${SCRIPT_DIR}/.env"
 
-    BB_API_EMAIL="${BB_API_EMAIL:?BB_API_EMAIL is required (set in .env or environment)}"
-    BB_API_TOKEN="${BB_API_TOKEN:?BB_API_TOKEN is required (set in .env or environment)}"
-    resolve_workspace_repo
-    BASE_URL="https://api.bitbucket.org/2.0/repositories/${WORKSPACE}/${REPO}"
-    AUTH="${BB_API_EMAIL}:${BB_API_TOKEN}"
-    main "$@"
+    # install-agent + help don't hit Bitbucket — skip auth/repo resolution
+    # so users can run them without .env configured or outside a git repo.
+    case "${1:-}" in
+        install-agent|help|-h|--help|"")
+            main "$@"
+            ;;
+        *)
+            BB_API_EMAIL="${BB_API_EMAIL:?BB_API_EMAIL is required (set in .env or environment)}"
+            BB_API_TOKEN="${BB_API_TOKEN:?BB_API_TOKEN is required (set in .env or environment)}"
+            resolve_workspace_repo
+            BASE_URL="https://api.bitbucket.org/2.0/repositories/${WORKSPACE}/${REPO}"
+            AUTH="${BB_API_EMAIL}:${BB_API_TOKEN}"
+            main "$@"
+            ;;
+    esac
 fi

@@ -97,6 +97,33 @@ EOF
     chmod +x "$STUB_DIR/curl"
 }
 
+# stub_curl_download <body> [http_code]
+# Stub for install-agent style curl: 'curl ... -o <file>'. Writes <body> to
+# the file given via -o; exits non-zero on http_code != 200.
+# Logs the full arg list to $STUB_DIR/.calls (like stub_curl) for assertions.
+stub_curl_download() {
+    local body="$1" code="${2:-200}"
+    cat >"$STUB_DIR/curl" <<EOF
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> "$STUB_DIR/.calls"
+out=""
+while [[ \$# -gt 0 ]]; do
+    case "\$1" in
+        -o) out="\$2"; shift 2 ;;
+        *)  shift ;;
+    esac
+done
+if [[ -n "\$out" ]]; then
+    printf '%s' $(printf %q "$body") > "\$out"
+fi
+case "$code" in
+    200) exit 0 ;;
+    *)   exit 22 ;;
+esac
+EOF
+    chmod +x "$STUB_DIR/curl"
+}
+
 # stub_git: install a git wrapper that returns canned remote URLs.
 # Usage: stub_git origin=https://bitbucket.org/ws/repo.git bb=git@bitbucket.org:other/x.git
 stub_git() {

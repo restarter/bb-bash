@@ -1,0 +1,64 @@
+## Bitbucket via bb-api
+
+**Tool:** `bb-api` (https://github.com/restarter/bb-api)
+**Install** (if not present):
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/restarter/bb-api/main/scripts/install.sh | bash
+```
+Auto-resolves through symlinks; `.env` lives next to the real script
+(`~/.local/share/bb-api/.env` after `install.sh`).
+
+**Auto-detects** workspace/repo from this repo's bitbucket.org remote.
+**Auth:** `BB_API_EMAIL` + `BB_API_TOKEN` in the `.env` file
+(`~/.local/share/bb-api/.env` for installed bb-api, or the file next to
+the script for manual installs — bb-api resolves symlinks).
+
+### Common workflows
+
+```bash
+# List PRs
+bb-api pr list                              # open PRs (default)
+bb-api pr list --state=merged --author=alice
+
+# Inspect a PR
+bb-api pr show <id>
+bb-api pr diff <id>
+bb-api pr comments <id>
+bb-api pr checks <id>                       # CI + pipelines status
+
+# Comment / review
+bb-api pr comment <id> "general comment"
+bb-api pr inline <id> path/to/file 42 "comment on new code"
+bb-api pr inline --old <id> path/to/file 10 "comment on deleted code"
+bb-api pr reply <pr_id> <comment_id> "reply text"
+
+# Approve / decline / merge
+bb-api pr approve <id> [<id> ...]           # batch-capable
+bb-api pr decline <id> [<id> ...]           # batch-capable
+bb-api pr merge <id> [--squash|--commit|--ff] [--delete-branch]
+
+# Create / update
+bb-api pr create <target_branch> "Title" "Description"
+bb-api pr update <id> --title="New title" --description="..."
+
+# Browser escape hatch
+bb-api pr open <id>
+```
+
+### For AI agents (review patterns)
+
+When reviewing a PR:
+1. `bb-api pr show <id>` — title, author, changed files
+2. `bb-api pr diff <id> | head -200` — read the diff
+3. `bb-api pr checks <id>` — confirm CI status before approving
+4. `bb-api pr inline <id> <path> <line> "feedback"` — inline review comments
+5. `bb-api pr approve <id>` or `bb-api pr comment <id> "summary"` to wrap up
+
+For batch operations (close stale PRs, approve multiple):
+
+```bash
+bb-api pr decline 65 67 89
+bb-api pr approve 12 15 18
+```
+
+Full reference: see bb-api repo's `docs/commands.md`.

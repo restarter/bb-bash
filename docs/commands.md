@@ -200,6 +200,46 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 ---
 
+## install-agent
+
+**Synopsis:**
+- `bb-api install-agent [--rule] [--skill] [--claudemd] [--agents] [--dry-run] [--force]`
+
+**Description:** Drop AI-agent integration artifacts into the current directory. Combine any subset of `--rule`, `--skill`, `--claudemd`, `--agents`. Without flags, prompts interactively for letter codes (`rsca`). Unlike `pr` and `raw`, this command does NOT require `.env` credentials or a Bitbucket-repo CWD — it runs from any directory.
+
+**Flags:**
+
+| Flag | Destination | Behavior |
+|------|-------------|----------|
+| `--rule` | `./.claude/rules/bb-api-rule.md` | Claude Code-only, auto-loaded into every context |
+| `--skill` | `./.claude/skills/bb-api/SKILL.md` | Claude Code-only, lazy-loaded when invoked |
+| `--claudemd` | `./CLAUDE.md` | Append `## Bitbucket via bb-api` section (create file if missing) |
+| `--agents` | `./AGENTS.md` | Same section, written to `AGENTS.md` (cross-tool standard) |
+| `--dry-run` | — | Print actions, write nothing to disk |
+| `--force` | — | Overwrite existing files / re-append section even if marker is present |
+
+**Idempotency:** by default skips any artifact that already exists. For `CLAUDE.md` / `AGENTS.md` the check is marker-based (`## Bitbucket via bb-api`) — file may exist for other reasons without skipping. Re-running is safe.
+
+**Source:** artifacts are fetched from `https://raw.githubusercontent.com/restarter/bb-api/${BB_API_REF:-main}/docs/`. Pin to a release tag for reproducibility:
+
+```bash
+BB_API_REF=v0.1.2 bb-api install-agent --rule --skill --claudemd --agents
+```
+
+**Examples:**
+
+```bash
+bb-api install-agent                                        # interactive
+bb-api install-agent --rule --skill                         # Claude Code-native pair
+bb-api install-agent --rule --skill --claudemd --agents     # everything
+bb-api install-agent --claudemd --dry-run                   # preview without writing
+bb-api install-agent --rule --force                         # overwrite existing rule
+```
+
+**Interactive mode:** prints status of each artifact (present/missing/no-section), then reads letter codes. `rsca` = all four; `rs` = rule+skill; `q` (or empty input) = quit. Invalid characters in the input are rejected; whitelist is `r`/`s`/`c`/`a`. Refuses to run interactively when stdin is not a TTY (`bb-api install-agent < /dev/null` or CI contexts) — pass explicit flags instead.
+
+---
+
 ## Environment overrides
 
 - `BB_API_REMOTE=<name>` — force a specific git remote for workspace/repo resolution
@@ -208,6 +248,7 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 - `BB_API_EMAIL` / `BB_API_TOKEN` — credentials (loaded from `.env` next to script by default)
 - `BB_API_USER_ONLY=1` — installer-only; force `~/.local/bin` (see [`../scripts/install.sh`](../scripts/install.sh))
 - `BB_API_FORCE=1` — installer-only; override non-symlink overwrite refusal (see [`../scripts/install.sh`](../scripts/install.sh))
+- `BB_API_REF=<git-ref>` — `install-agent` only; ref to fetch agent artifacts from (default `main`)
 
 See [design.md](design.md) for the full env precedence and auto-detect chain.
 
