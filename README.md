@@ -1,8 +1,8 @@
 # bb-bash (bbb)
 
-> **Bitbucket Cloud CLI built for AI coding agents** — single-file bash, with `CLAUDE.md` snippet, Rule, and Skill bundled out of the box.
+> **Bitbucket Cloud CLI built for AI coding agents** — single-file bash with zero-config repo auto-detect, plus `CLAUDE.md` snippet, Rule, and Skill bundled out of the box.
 
-`bbb` (the binary) wraps the Bitbucket Cloud REST API 2.0 so you and your AI agent can drive PR review, inline comments, approve, decline, merge, and create — all from chat or terminal, without leaving your editor. No build step, no package manager: one bash script, two dependencies (`curl`, `jq`).
+`bbb` (the binary) wraps the Bitbucket Cloud REST API 2.0 so you and your AI agent can drive PR review, inline comments, approve, decline, merge, and create — all from chat or terminal, without leaving your editor. `cd` into any Bitbucket-Cloud-backed repo and run `bbb pr list` — workspace/repo are auto-detected from `git remote`, no per-project setup. No build step, no package manager: one bash script, two dependencies (`curl`, `jq`).
 
 The drop-in artifacts (`CLAUDE.md` / `AGENTS.md` snippets + Claude Code **Rule** + Claude Code **Skill**) teach the AI agents you already use (Claude Code, Cursor, Copilot Chat, Codex, Aider, …) how to call `bbb` — no manual wiring. See [For AI agents](#for-ai-agents) for what each artifact does.
 
