@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# Tests for bb-api's resolve_script_dir — symlink resolution with cycle
-# protection. Sources bb-api via test_helper.bash's load_bb_api; the function
+# Tests for bbb's resolve_script_dir — symlink resolution with cycle
+# protection. Sources bbb via test_helper.bash's load_bbb; the function
 # is defined in Helpers (above the BASH_SOURCE guard), so it's available
 # after sourcing without firing main().
 
@@ -8,7 +8,7 @@ load test_helper
 
 setup() {
     TEST_TMP=$(mktemp -d)
-    load_bb_api
+    load_bbb
 }
 
 teardown() {
@@ -16,7 +16,7 @@ teardown() {
 }
 
 @test "resolve_script_dir: returns dirname of a non-symlink path" {
-    local target="$TEST_TMP/sub/bb-api"
+    local target="$TEST_TMP/sub/bbb"
     mkdir -p "$(dirname "$target")"
     : > "$target"
     run resolve_script_dir "$target"
@@ -25,8 +25,8 @@ teardown() {
 }
 
 @test "resolve_script_dir: follows a single symlink (absolute target)" {
-    local real="$TEST_TMP/data/bb-api"
-    local link="$TEST_TMP/bin/bb-api"
+    local real="$TEST_TMP/data/bbb"
+    local link="$TEST_TMP/bin/bbb"
     mkdir -p "$(dirname "$real")" "$(dirname "$link")"
     : > "$real"
     ln -s "$real" "$link"
@@ -36,9 +36,9 @@ teardown() {
 }
 
 @test "resolve_script_dir: follows a chain of symlinks" {
-    local real="$TEST_TMP/data/bb-api"
-    local mid="$TEST_TMP/mid/bb-api"
-    local link="$TEST_TMP/bin/bb-api"
+    local real="$TEST_TMP/data/bbb"
+    local mid="$TEST_TMP/mid/bbb"
+    local link="$TEST_TMP/bin/bbb"
     mkdir -p "$(dirname "$real")" "$(dirname "$mid")" "$(dirname "$link")"
     : > "$real"
     ln -s "$real" "$mid"
@@ -49,18 +49,18 @@ teardown() {
 }
 
 @test "resolve_script_dir: handles relative symlink targets" {
-    local real="$TEST_TMP/data/bb-api"
-    local link="$TEST_TMP/bin/bb-api"
+    local real="$TEST_TMP/data/bbb"
+    local link="$TEST_TMP/bin/bbb"
     mkdir -p "$(dirname "$real")" "$(dirname "$link")"
     : > "$real"
-    ln -s ../data/bb-api "$link"
+    ln -s ../data/bbb "$link"
     run resolve_script_dir "$link"
     [ "$status" -eq 0 ]
     [ "$output" = "$TEST_TMP/data" ]
 }
 
 @test "resolve_script_dir: handles paths with embedded spaces" {
-    local real="$TEST_TMP/dir with spaces/bb-api"
+    local real="$TEST_TMP/dir with spaces/bbb"
     mkdir -p "$(dirname "$real")"
     : > "$real"
     run resolve_script_dir "$real"
@@ -70,9 +70,9 @@ teardown() {
 
 @test "resolve_script_dir: broken symlink (missing target) dies with context" {
     # Function detects the missing parent dir explicitly and dies with a
-    # bb-api-prefixed message — much better UX than the raw `cd: No such
+    # bbb-prefixed message — much better UX than the raw `cd: No such
     # file or directory` the user used to see under set -e.
-    local broken="$TEST_TMP/here/bb-api"
+    local broken="$TEST_TMP/here/bbb"
     mkdir -p "$(dirname "$broken")"
     ln -s /nonexistent/path "$broken"
     run resolve_script_dir "$broken"

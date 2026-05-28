@@ -1,9 +1,9 @@
 #!/usr/bin/env bats
 # Tests for scripts/install.sh pure-function helpers. Sources install.sh
-# under its BASH_SOURCE guard (main is wrapped in _bb_api_install_main()
+# under its BASH_SOURCE guard (main is wrapped in _bbb_install_main()
 # and only fires when run directly), so helpers are usable individually.
 #
-# WARNING: don't combine load_install_sh with load_bb_api in the same @test —
+# WARNING: don't combine load_install_sh with load_bbb in the same @test —
 # both files define die(); the second source silently overwrites the first.
 
 load test_helper
@@ -13,7 +13,7 @@ INSTALL_SH="$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)/scripts/install
 setup() {
     TEST_TMP=$(mktemp -d)
     # Save PATH — tests below replace $PATH with synthetic paths to exercise
-    # path_contains / find_bb_api_on_path; teardown needs the real PATH to
+    # path_contains / find_bbb_on_path; teardown needs the real PATH to
     # find `rm`, `wc`, `tr`, etc.
     _SAVED_PATH=$PATH
 }
@@ -54,10 +54,10 @@ load_install_sh() {
     [ -d "$TEST_TMP/fallback" ]
 }
 
-@test "install.sh: pick_install_dir respects BB_API_USER_ONLY" {
+@test "install.sh: pick_install_dir respects BB_BASH_USER_ONLY" {
     load_install_sh
     mkdir -p "$TEST_TMP/preferred"
-    BB_API_USER_ONLY=1
+    BB_BASH_USER_ONLY=1
     run pick_install_dir "$TEST_TMP/preferred" "$TEST_TMP/fallback"
     [ "$status" -eq 0 ]
     [ "$output" = "$TEST_TMP/fallback" ]
@@ -70,7 +70,7 @@ load_install_sh() {
     XDG_DATA_HOME="$TEST_TMP/xdg"
     run pick_data_dir
     [ "$status" -eq 0 ]
-    [ "$output" = "$TEST_TMP/xdg/bb-api" ]
+    [ "$output" = "$TEST_TMP/xdg/bb-bash" ]
 }
 
 @test "install.sh: pick_data_dir falls back to ~/.local/share when XDG unset" {
@@ -79,7 +79,7 @@ load_install_sh() {
     unset XDG_DATA_HOME
     run pick_data_dir
     [ "$status" -eq 0 ]
-    [ "$output" = "$TEST_TMP/home/.local/share/bb-api" ]
+    [ "$output" = "$TEST_TMP/home/.local/share/bb-bash" ]
 }
 
 # --- path_contains ---
@@ -180,12 +180,12 @@ load_install_sh() {
 @test "install.sh: _resolve_symlink_chain follows a chain" {
     load_install_sh
     mkdir -p "$TEST_TMP/real" "$TEST_TMP/mid" "$TEST_TMP/link"
-    : > "$TEST_TMP/real/bb-api"
-    ln -s "$TEST_TMP/real/bb-api" "$TEST_TMP/mid/bb-api"
-    ln -s "$TEST_TMP/mid/bb-api"  "$TEST_TMP/link/bb-api"
-    run _resolve_symlink_chain "$TEST_TMP/link/bb-api"
+    : > "$TEST_TMP/real/bbb"
+    ln -s "$TEST_TMP/real/bbb" "$TEST_TMP/mid/bbb"
+    ln -s "$TEST_TMP/mid/bbb"  "$TEST_TMP/link/bbb"
+    run _resolve_symlink_chain "$TEST_TMP/link/bbb"
     [ "$status" -eq 0 ]
-    [ "$output" = "$TEST_TMP/real/bb-api" ]
+    [ "$output" = "$TEST_TMP/real/bbb" ]
 }
 
 @test "install.sh: _resolve_symlink_chain caps cycles (no hang)" {
@@ -203,67 +203,67 @@ load_install_sh() {
     esac
 }
 
-# --- find_bb_api_on_path ---
+# --- find_bbb_on_path ---
 
-@test "install.sh: find_bb_api_on_path detects duplicates (PATH=A:A)" {
+@test "install.sh: find_bbb_on_path detects duplicates (PATH=A:A)" {
     load_install_sh
     mkdir -p "$TEST_TMP/binA"
-    printf '#!/bin/sh\necho A\n' > "$TEST_TMP/binA/bb-api"
-    chmod +x "$TEST_TMP/binA/bb-api"
+    printf '#!/bin/sh\necho A\n' > "$TEST_TMP/binA/bbb"
+    chmod +x "$TEST_TMP/binA/bbb"
     PATH="$TEST_TMP/binA:$TEST_TMP/binA:$_SAVED_PATH"
-    run find_bb_api_on_path
+    run find_bbb_on_path
     PATH=$_SAVED_PATH
     [ "$status" -eq 0 ]
     [ "$(echo "$output" | wc -l | tr -d ' ')" = "1" ]
 }
 
-@test "install.sh: find_bb_api_on_path lists two distinct entries" {
+@test "install.sh: find_bbb_on_path lists two distinct entries" {
     load_install_sh
     mkdir -p "$TEST_TMP/binA" "$TEST_TMP/binB"
-    printf '#!/bin/sh\necho A\n' > "$TEST_TMP/binA/bb-api"
-    printf '#!/bin/sh\necho B\n' > "$TEST_TMP/binB/bb-api"
-    chmod +x "$TEST_TMP/binA/bb-api" "$TEST_TMP/binB/bb-api"
+    printf '#!/bin/sh\necho A\n' > "$TEST_TMP/binA/bbb"
+    printf '#!/bin/sh\necho B\n' > "$TEST_TMP/binB/bbb"
+    chmod +x "$TEST_TMP/binA/bbb" "$TEST_TMP/binB/bbb"
     PATH="$TEST_TMP/binA:$TEST_TMP/binB:$_SAVED_PATH"
-    run find_bb_api_on_path
+    run find_bbb_on_path
     PATH=$_SAVED_PATH
     [ "$status" -eq 0 ]
     [ "$(echo "$output" | wc -l | tr -d ' ')" = "2" ]
-    contains "$output" "*binA/bb-api*"
-    contains "$output" "*binB/bb-api*"
+    contains "$output" "*binA/bbb*"
+    contains "$output" "*binB/bbb*"
 }
 
-@test "install.sh: find_bb_api_on_path follows absolute-target symlink" {
+@test "install.sh: find_bbb_on_path follows absolute-target symlink" {
     load_install_sh
     mkdir -p "$TEST_TMP/real" "$TEST_TMP/link"
-    printf '#!/bin/sh\n' > "$TEST_TMP/real/bb-api"
-    chmod +x "$TEST_TMP/real/bb-api"
-    ln -s "$TEST_TMP/real/bb-api" "$TEST_TMP/link/bb-api"
+    printf '#!/bin/sh\n' > "$TEST_TMP/real/bbb"
+    chmod +x "$TEST_TMP/real/bbb"
+    ln -s "$TEST_TMP/real/bbb" "$TEST_TMP/link/bbb"
     PATH="$TEST_TMP/link:$_SAVED_PATH"
-    run find_bb_api_on_path
+    run find_bbb_on_path
     PATH=$_SAVED_PATH
     [ "$status" -eq 0 ]
-    contains "$output" "*real/bb-api*"
+    contains "$output" "*real/bbb*"
 }
 
-@test "install.sh: find_bb_api_on_path follows relative-target symlink" {
+@test "install.sh: find_bbb_on_path follows relative-target symlink" {
     load_install_sh
     mkdir -p "$TEST_TMP/real" "$TEST_TMP/link"
-    printf '#!/bin/sh\n' > "$TEST_TMP/real/bb-api"
-    chmod +x "$TEST_TMP/real/bb-api"
-    ln -s ../real/bb-api "$TEST_TMP/link/bb-api"
+    printf '#!/bin/sh\n' > "$TEST_TMP/real/bbb"
+    chmod +x "$TEST_TMP/real/bbb"
+    ln -s ../real/bbb "$TEST_TMP/link/bbb"
     PATH="$TEST_TMP/link:$_SAVED_PATH"
-    run find_bb_api_on_path
+    run find_bbb_on_path
     PATH=$_SAVED_PATH
     [ "$status" -eq 0 ]
-    contains "$output" "*real/bb-api*"
+    contains "$output" "*real/bbb*"
 }
 
-@test "install.sh: find_bb_api_on_path skips non-executable file" {
+@test "install.sh: find_bbb_on_path skips non-executable file" {
     load_install_sh
     mkdir -p "$TEST_TMP/bin"
-    : > "$TEST_TMP/bin/bb-api"   # exists but not +x
+    : > "$TEST_TMP/bin/bbb"   # exists but not +x
     PATH="$TEST_TMP/bin:$_SAVED_PATH"
-    run find_bb_api_on_path
+    run find_bbb_on_path
     PATH=$_SAVED_PATH
     [ "$status" -eq 0 ]
     [ -z "$output" ]
@@ -283,7 +283,7 @@ load_install_sh() {
     # and a non-zero exit.
     # Replace the main-call line with `:` (no-op) — deleting it would leave
     # an empty then/fi block which is a bash syntax error.
-    sed 's|^    _bb_api_install_main "\$@"$|    :|' "$INSTALL_SH" > "$TEST_TMP/no_main.sh"
+    sed 's|^    _bbb_install_main "\$@"$|    :|' "$INSTALL_SH" > "$TEST_TMP/no_main.sh"
     run bash < "$TEST_TMP/no_main.sh"
     [ "$status" -eq 0 ]
     not_contains "$output" "*unbound variable*"

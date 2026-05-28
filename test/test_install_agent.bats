@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for `bb-api install-agent` subcommand.
+# Tests for `bbb install-agent` subcommand.
 
 load test_helper
 
@@ -17,27 +17,27 @@ teardown() {
     rm -rf "$TEST_TMP"
 }
 
-# Run bb-api with auth bypassed (install-agent doesn't need it, but the
+# Run bbb with auth bypassed (install-agent doesn't need it, but the
 # top-level guard's case-statement short-circuit is exercised end-to-end here).
-_run_bb_api() {
-    BB_API_EMAIL="" BB_API_TOKEN="" \
-        run "${BATS_TEST_DIRNAME}/../bb-api" "$@"
+_run_bbb() {
+    BB_BASH_EMAIL="" BB_BASH_TOKEN="" \
+        run "${BATS_TEST_DIRNAME}/../bbb" "$@"
 }
 
 # --- flag parsing ---
 
 @test "install-agent: --help exits 0 and prints synopsis" {
-    _run_bb_api install-agent --help
+    _run_bbb install-agent --help
     [ "$status" -eq 0 ]
     contains "$output" "*--rule*"
     contains "$output" "*--skill*"
     contains "$output" "*--claudemd*"
     contains "$output" "*--agents*"
-    contains "$output" "*BB_API_REF*"
+    contains "$output" "*BB_BASH_REF*"
 }
 
 @test "install-agent: unknown flag dies" {
-    _run_bb_api install-agent --bogus
+    _run_bbb install-agent --bogus
     [ "$status" -ne 0 ]
     contains "$output" "*Unknown flag*"
 }
@@ -45,17 +45,17 @@ _run_bb_api() {
 # --- dry-run paths (no curl invocation) ---
 
 @test "install-agent: --rule --dry-run prints what would happen, no writes" {
-    _run_bb_api install-agent --rule --dry-run
+    _run_bbb install-agent --rule --dry-run
     [ "$status" -eq 0 ]
     contains "$output" "*dry-run*"
-    contains "$output" "*bb-api-rule.md*"
-    [ ! -e "$TEST_TMP/.claude/rules/bb-api-rule.md" ]
+    contains "$output" "*bb-bash-rule.md*"
+    [ ! -e "$TEST_TMP/.claude/rules/bb-bash-rule.md" ]
 }
 
 @test "install-agent: --rule --skill --claudemd --agents --dry-run all four lines, no writes" {
-    _run_bb_api install-agent --rule --skill --claudemd --agents --dry-run
+    _run_bbb install-agent --rule --skill --claudemd --agents --dry-run
     [ "$status" -eq 0 ]
-    contains "$output" "*bb-api-rule.md*"
+    contains "$output" "*bb-bash-rule.md*"
     contains "$output" "*SKILL.md*"
     contains "$output" "*CLAUDE.md*"
     contains "$output" "*AGENTS.md*"
@@ -68,87 +68,87 @@ _run_bb_api() {
 
 @test "install-agent: --rule writes file via curl stub" {
     stub_curl_download "rule body"
-    _run_bb_api install-agent --rule
+    _run_bbb install-agent --rule
     [ "$status" -eq 0 ]
-    [ -f "$TEST_TMP/.claude/rules/bb-api-rule.md" ]
-    grep -q "rule body" "$TEST_TMP/.claude/rules/bb-api-rule.md"
-    contains "$(last_curl_call)" "*raw.githubusercontent.com/restarter/bb-api/main/docs/bb-api-rule.md*"
+    [ -f "$TEST_TMP/.claude/rules/bb-bash-rule.md" ]
+    grep -q "rule body" "$TEST_TMP/.claude/rules/bb-bash-rule.md"
+    contains "$(last_curl_call)" "*raw.githubusercontent.com/restarter/bb-bash/main/docs/bb-bash-rule.md*"
 }
 
-@test "install-agent: BB_API_REF pins the ref in the URL" {
+@test "install-agent: BB_BASH_REF pins the ref in the URL" {
     stub_curl_download "pinned body"
-    BB_API_REF=v0.1.2 _run_bb_api install-agent --rule
+    BB_BASH_REF=v0.1.2 _run_bbb install-agent --rule
     [ "$status" -eq 0 ]
-    contains "$(last_curl_call)" "*restarter/bb-api/v0.1.2/docs/bb-api-rule.md*"
+    contains "$(last_curl_call)" "*restarter/bb-bash/v0.1.2/docs/bb-bash-rule.md*"
 }
 
 @test "install-agent: --rule skips when file already exists, no --force" {
     mkdir -p "$TEST_TMP/.claude/rules"
-    echo "existing" > "$TEST_TMP/.claude/rules/bb-api-rule.md"
+    echo "existing" > "$TEST_TMP/.claude/rules/bb-bash-rule.md"
     stub_curl_download "new body"
-    _run_bb_api install-agent --rule
+    _run_bbb install-agent --rule
     [ "$status" -eq 0 ]
     contains "$output" "*skip*"
-    grep -q "existing" "$TEST_TMP/.claude/rules/bb-api-rule.md"
+    grep -q "existing" "$TEST_TMP/.claude/rules/bb-bash-rule.md"
     [ ! -f "$STUB_DIR/.calls" ] || [ ! -s "$STUB_DIR/.calls" ]
 }
 
 @test "install-agent: --rule --force overwrites existing file" {
     mkdir -p "$TEST_TMP/.claude/rules"
-    echo "existing" > "$TEST_TMP/.claude/rules/bb-api-rule.md"
+    echo "existing" > "$TEST_TMP/.claude/rules/bb-bash-rule.md"
     stub_curl_download "new body"
-    _run_bb_api install-agent --rule --force
+    _run_bbb install-agent --rule --force
     [ "$status" -eq 0 ]
-    grep -q "new body" "$TEST_TMP/.claude/rules/bb-api-rule.md"
+    grep -q "new body" "$TEST_TMP/.claude/rules/bb-bash-rule.md"
 }
 
 # --- CLAUDE.md / AGENTS.md modes ---
 
 @test "install-agent: --claudemd creates CLAUDE.md when missing" {
-    stub_curl_download "## Bitbucket via bb-api
+    stub_curl_download "## Bitbucket via bb-bash
 content"
-    _run_bb_api install-agent --claudemd
+    _run_bbb install-agent --claudemd
     [ "$status" -eq 0 ]
     [ -f "$TEST_TMP/CLAUDE.md" ]
-    grep -q "Bitbucket via bb-api" "$TEST_TMP/CLAUDE.md"
+    grep -q "Bitbucket via bb-bash" "$TEST_TMP/CLAUDE.md"
     contains "$output" "*created*"
 }
 
-@test "install-agent: --claudemd appends to existing CLAUDE.md without bb-api section" {
+@test "install-agent: --claudemd appends to existing CLAUDE.md without bbb section" {
     echo "# My project" > "$TEST_TMP/CLAUDE.md"
-    stub_curl_download "## Bitbucket via bb-api
+    stub_curl_download "## Bitbucket via bb-bash
 content"
-    _run_bb_api install-agent --claudemd
+    _run_bbb install-agent --claudemd
     [ "$status" -eq 0 ]
     grep -q "My project" "$TEST_TMP/CLAUDE.md"
-    grep -q "Bitbucket via bb-api" "$TEST_TMP/CLAUDE.md"
+    grep -q "Bitbucket via bb-bash" "$TEST_TMP/CLAUDE.md"
     grep -q "^---$" "$TEST_TMP/CLAUDE.md"
     contains "$output" "*appended*"
 }
 
-@test "install-agent: --claudemd skips when CLAUDE.md already has bb-api section" {
-    printf '# Project\n\n## Bitbucket via bb-api\nold content\n' > "$TEST_TMP/CLAUDE.md"
+@test "install-agent: --claudemd skips when CLAUDE.md already has bbb section" {
+    printf '# Project\n\n## Bitbucket via bb-bash\nold content\n' > "$TEST_TMP/CLAUDE.md"
     stub_curl_download "new content"
-    _run_bb_api install-agent --claudemd
+    _run_bbb install-agent --claudemd
     [ "$status" -eq 0 ]
     contains "$output" "*already has*"
     grep -q "old content" "$TEST_TMP/CLAUDE.md"
 }
 
 @test "install-agent: --claudemd --force re-appends even when section exists" {
-    printf '# Project\n\n## Bitbucket via bb-api\nold content\n' > "$TEST_TMP/CLAUDE.md"
-    stub_curl_download "## Bitbucket via bb-api
+    printf '# Project\n\n## Bitbucket via bb-bash\nold content\n' > "$TEST_TMP/CLAUDE.md"
+    stub_curl_download "## Bitbucket via bb-bash
 new content"
-    _run_bb_api install-agent --claudemd --force
+    _run_bbb install-agent --claudemd --force
     [ "$status" -eq 0 ]
     contains "$output" "*appended*"
-    [ "$(grep -c 'Bitbucket via bb-api' "$TEST_TMP/CLAUDE.md")" = "2" ]
+    [ "$(grep -c 'Bitbucket via bb-bash' "$TEST_TMP/CLAUDE.md")" = "2" ]
 }
 
 @test "install-agent: --agents writes AGENTS.md (parallel to claudemd)" {
-    stub_curl_download "## Bitbucket via bb-api
+    stub_curl_download "## Bitbucket via bb-bash
 agents content"
-    _run_bb_api install-agent --agents
+    _run_bbb install-agent --agents
     [ "$status" -eq 0 ]
     [ -f "$TEST_TMP/AGENTS.md" ]
     grep -q "agents content" "$TEST_TMP/AGENTS.md"
@@ -158,12 +158,12 @@ agents content"
 # --- combined flags (real-world "all four at once") ---
 
 @test "install-agent: --rule --skill --claudemd --agents writes all four in one run" {
-    stub_curl_download "## Bitbucket via bb-api
+    stub_curl_download "## Bitbucket via bb-bash
 combined content"
-    _run_bb_api install-agent --rule --skill --claudemd --agents
+    _run_bbb install-agent --rule --skill --claudemd --agents
     [ "$status" -eq 0 ]
-    [ -f "$TEST_TMP/.claude/rules/bb-api-rule.md" ]
-    [ -f "$TEST_TMP/.claude/skills/bb-api/SKILL.md" ]
+    [ -f "$TEST_TMP/.claude/rules/bb-bash-rule.md" ]
+    [ -f "$TEST_TMP/.claude/skills/bb-bash/SKILL.md" ]
     [ -f "$TEST_TMP/CLAUDE.md" ]
     [ -f "$TEST_TMP/AGENTS.md" ]
     grep -q "combined content" "$TEST_TMP/CLAUDE.md"
@@ -177,20 +177,20 @@ combined content"
 # else. These two tests pin both branches so a future tweak can't silently
 # break either path.
 
-@test "guard: 'bb-api help' runs without BB_API_EMAIL/BB_API_TOKEN" {
-    BB_API_EMAIL="" BB_API_TOKEN="" BB_API_WORKSPACE="" BB_API_REPO="" \
-        run "${BATS_TEST_DIRNAME}/../bb-api" help
+@test "guard: 'bbb help' runs without BB_BASH_EMAIL/BB_BASH_TOKEN" {
+    BB_BASH_EMAIL="" BB_BASH_TOKEN="" BB_BASH_WORKSPACE="" BB_BASH_REPO="" \
+        run "${BATS_TEST_DIRNAME}/../bbb" help
     [ "$status" -eq 0 ]
     contains "$output" "*install-agent*"
 }
 
-@test "guard: 'bb-api pr list' takes the full guard path (auth/repo resolution)" {
+@test "guard: 'bbb pr list' takes the full guard path (auth/repo resolution)" {
     # Run from an isolated copy so the project's own .env doesn't get sourced
-    # (which would mask the empty-credential test by populating BB_API_EMAIL).
-    cp "${BATS_TEST_DIRNAME}/../bb-api" "$TEST_TMP/bb-api"
-    chmod +x "$TEST_TMP/bb-api"
-    BB_API_EMAIL="" BB_API_TOKEN="" BB_API_WORKSPACE="" BB_API_REPO="" \
-        run "$TEST_TMP/bb-api" pr list
+    # (which would mask the empty-credential test by populating BB_BASH_EMAIL).
+    cp "${BATS_TEST_DIRNAME}/../bbb" "$TEST_TMP/bbb"
+    chmod +x "$TEST_TMP/bbb"
+    BB_BASH_EMAIL="" BB_BASH_TOKEN="" BB_BASH_WORKSPACE="" BB_BASH_REPO="" \
+        run "$TEST_TMP/bbb" pr list
     [ "$status" -ne 0 ]
-    contains "$output" "*BB_API_EMAIL*"
+    contains "$output" "*BB_BASH_EMAIL*"
 }

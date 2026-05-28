@@ -4,7 +4,7 @@ load test_helper
 
 setup() {
     stub_paths
-    load_bb_api
+    load_bbb
 }
 
 teardown() {
@@ -37,9 +37,9 @@ teardown() {
 
 @test "resolve_workspace_repo: ignores non-bitbucket origin and falls to env" {
     stub_git "origin=git@github.com:user/repo.git"
-    export BB_API_WORKSPACE="envws"
-    export BB_API_REPO="envrepo"
-    unset BB_API_REMOTE WORKSPACE REPO
+    export BB_BASH_WORKSPACE="envws"
+    export BB_BASH_REPO="envrepo"
+    unset BB_BASH_REMOTE WORKSPACE REPO
     resolve_workspace_repo
     [ "$WORKSPACE" = "envws" ]
     [ "$REPO" = "envrepo" ]
@@ -47,7 +47,7 @@ teardown() {
 
 @test "resolve_workspace_repo: rejects slug with leading dot (path-traversal-ish)" {
     stub_git "origin=git@bitbucket.org:.hidden/repo.git"
-    unset WORKSPACE REPO BB_API_WORKSPACE BB_API_REPO
+    unset WORKSPACE REPO BB_BASH_WORKSPACE BB_BASH_REPO
     run resolve_workspace_repo
     [ "$status" -ne 0 ]
     contains "$output" '*Invalid workspace slug*'
@@ -55,9 +55,9 @@ teardown() {
 
 @test "resolve_workspace_repo: rejects evil.bitbucket.org false-positive" {
     stub_git "origin=git@evil.bitbucket.org.attacker.com:foo/bar.git"
-    export BB_API_WORKSPACE="envws"
-    export BB_API_REPO="envrepo"
-    unset BB_API_REMOTE WORKSPACE REPO
+    export BB_BASH_WORKSPACE="envws"
+    export BB_BASH_REPO="envrepo"
+    unset BB_BASH_REMOTE WORKSPACE REPO
     resolve_workspace_repo
     # Should fall to env vars (regex anchored)
     [ "$WORKSPACE" = "envws" ]
@@ -66,7 +66,7 @@ teardown() {
 
 @test "resolve_workspace_repo: scans multiple remotes for bitbucket" {
     stub_git "origin=git@github.com:u/r.git" "bb=git@bitbucket.org:bbws/bbrepo.git"
-    unset WORKSPACE REPO BB_API_WORKSPACE BB_API_REPO BB_API_REMOTE
+    unset WORKSPACE REPO BB_BASH_WORKSPACE BB_BASH_REPO BB_BASH_REMOTE
     resolve_workspace_repo
     [ "$WORKSPACE" = "bbws" ]
     [ "$REPO" = "bbrepo" ]
