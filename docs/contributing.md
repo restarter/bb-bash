@@ -13,13 +13,13 @@ sudo apt install shellcheck jq                # Debian/Ubuntu (note: apt 'bats' 
 ## Running tests
 
 ```bash
-shellcheck bb-api test/test_helper.bash scripts/install.sh
+shellcheck bbb test/test_helper.bash scripts/install.sh
 bats test/*.bats
 ```
 
 ### macOS bash 3.2
 
-CI runs on ubuntu-24.04 (bash 5.x, GNU `readlink`). bb-api and `scripts/install.sh` target macOS bash 3.2 too (BSD `readlink`, no `mapfile`, empty-array `set -u` quirks). Run the full bats suite locally on macOS before pushing — these bugs won't surface in CI:
+CI runs on ubuntu-24.04 (bash 5.x, GNU `readlink`). bbb and `scripts/install.sh` target macOS bash 3.2 too (BSD `readlink`, no `mapfile`, empty-array `set -u` quirks). Run the full bats suite locally on macOS before pushing — these bugs won't surface in CI:
 
 ```bash
 /bin/bash --version   # confirm 3.2.x — the macOS system bash
@@ -31,9 +31,9 @@ bats test/*.bats
 These hit a real Bitbucket repo. Use a sandbox, not production.
 
 ```bash
-BB_API_TEST_LIVE=1 \
-  BB_API_EMAIL=... BB_API_TOKEN=... \
-  BB_API_TEST_WORKSPACE=ws BB_API_TEST_REPO=repo \
+BB_BASH_TEST_LIVE=1 \
+  BB_BASH_EMAIL=... BB_BASH_TOKEN=... \
+  BB_BASH_TEST_WORKSPACE=ws BB_BASH_TEST_REPO=repo \
   bats test/test_live.bats
 ```
 
@@ -41,7 +41,7 @@ Skipped by default.
 
 ## Adding a new command
 
-1. Add a `cmd_pr_<name>()` function in `bb-api`, placed near related commands
+1. Add a `cmd_pr_<name>()` function in `bbb`, placed near related commands
 2. Add a case to the router's `pr` subcommand block
 3. Add a usage line to `usage()`
 4. Update `README.md` Usage section + add a full entry in [`docs/commands.md`](commands.md)
@@ -65,12 +65,12 @@ Batch commands use the `batch_action` helper. Two-line wrapper:
 
 ```bash
 cmd_pr_foo() {
-    require_args 1 $# "Usage: bb-api pr foo <id> [id ...]"
+    require_args 1 $# "Usage: bbb pr foo <id> [id ...]"
     batch_action "foo-ed" "/pullrequests/{id}/foo" '.state // "FOOED"' "$@"
 }
 ```
 
-`batch_action` handles: ID iteration, `api_post --soft` calls, per-PR status formatting, success/error branches, sleep between calls (configurable via `BB_API_BATCH_DELAY`).
+`batch_action` handles: ID iteration, `api_post --soft` calls, per-PR status formatting, success/error branches, sleep between calls (configurable via `BB_BASH_BATCH_DELAY`).
 
 ## Testing pattern (REQUIRED)
 
@@ -100,7 +100,7 @@ bats has no native coverage tool. Approach is qualitative: one happy-path + one 
 
 ## Commit convention
 
-Conventional commits with `bb-api-XXX` task scope:
+Conventional commits with `bb-api-XXX` beads task ID as scope (the beads project prefix remains `bb-api-` for historical reasons; only the binary/project was renamed):
 
 - `feat(bb-api-XXX): add 'pr foo' command`
 - `fix(bb-api-XXX): handle empty response in pr bar`
@@ -121,7 +121,7 @@ Conventional commits with `bb-api-XXX` task scope:
 
 ## scripts/
 
-`scripts/install.sh` — the curl-pipe-bash installer. Shellchecked in CI alongside `bb-api`. Pure-function helpers (`pick_install_dir`, `path_contains`, `extract_tag_name`, `_resolve_symlink_chain`, `find_bb_api_on_path`) covered by `test/test_install_helpers.bats`. The `resolve_script_dir` helper in `bb-api` (used at startup to anchor `.env` discovery through symlinks) is covered by `test/test_script_dir.bats`.
+`scripts/install.sh` — the curl-pipe-bash installer. Shellchecked in CI alongside `bbb`. Pure-function helpers (`pick_install_dir`, `path_contains`, `extract_tag_name`, `_resolve_symlink_chain`, `find_bbb_on_path`) covered by `test/test_install_helpers.bats`. The `resolve_script_dir` helper in `bbb` (used at startup to anchor `.env` discovery through symlinks) is covered by `test/test_script_dir.bats`.
 
 When bumping a release:
 
@@ -134,4 +134,4 @@ Users picking up `curl ... | bash` get the new tag automatically — the install
 
 ## A note on `.env`
 
-bb-api `source`s `.env` — any shell metacharacter executes on every invocation. Never put `$(...)`, backticks, or unmatched quotes in `.env` or `.env.example`. Switching bb-api to a safe key=value parser is tracked as a follow-up.
+bbb `source`s `.env` — any shell metacharacter executes on every invocation. Never put `$(...)`, backticks, or unmatched quotes in `.env` or `.env.example`. Switching bbb to a safe key=value parser is tracked as a follow-up.
