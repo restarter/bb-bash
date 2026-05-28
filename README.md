@@ -53,6 +53,8 @@ Idempotent — re-run is safe; pin a release with `BB_BASH_REF=v0.2.0 bbb instal
 
 ### What ships out of the box
 
+**Pick any one** — each artifact is fully self-contained. Your AI agent gets the same end result (install hint, auth, commands, conventions, workflows). Choose by your tool / preference; combine if you want.
+
 | Type | Lands at | Loading | Best for |
 |---|---|---|---|
 | `CLAUDE.md` | project root | every turn | Claude / Cursor / Copilot via `CLAUDE.md` |

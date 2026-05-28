@@ -288,7 +288,7 @@ batch_action() {
 _install_agent_fetch() {
     local src="$1" dest="$2"
     local ref="${BB_BASH_REF:-main}"
-    local url="https://raw.githubusercontent.com/restarter/bb-bash/${ref}/docs/${src}"
+    local url="https://raw.githubusercontent.com/restarter/bb-bash/${ref}/docs/agents/${src}"
 
     if [[ "${INSTALL_AGENT_DRY_RUN:-false}" == "true" ]]; then
         echo "  [dry-run] fetch: $url"
@@ -317,7 +317,7 @@ _install_agent_fetch() {
 _install_agent_md_section() {
     local dest="$1"
     local ref="${BB_BASH_REF:-main}"
-    local url="https://raw.githubusercontent.com/restarter/bb-bash/${ref}/docs/bb-bash-agent-snippet.md"
+    local url="https://raw.githubusercontent.com/restarter/bb-bash/${ref}/docs/agents/bb-bash-snippet.md"
     local marker='## Bitbucket via bb-bash'
 
     if [[ "${INSTALL_AGENT_DRY_RUN:-false}" == "true" ]]; then

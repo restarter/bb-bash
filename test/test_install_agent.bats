@@ -72,14 +72,14 @@ _run_bbb() {
     [ "$status" -eq 0 ]
     [ -f "$TEST_TMP/.claude/rules/bb-bash-rule.md" ]
     grep -q "rule body" "$TEST_TMP/.claude/rules/bb-bash-rule.md"
-    contains "$(last_curl_call)" "*raw.githubusercontent.com/restarter/bb-bash/main/docs/bb-bash-rule.md*"
+    contains "$(last_curl_call)" "*raw.githubusercontent.com/restarter/bb-bash/main/docs/agents/bb-bash-rule.md*"
 }
 
 @test "install-agent: BB_BASH_REF pins the ref in the URL" {
     stub_curl_download "pinned body"
     BB_BASH_REF=v0.1.2 _run_bbb install-agent --rule
     [ "$status" -eq 0 ]
-    contains "$(last_curl_call)" "*restarter/bb-bash/v0.1.2/docs/bb-bash-rule.md*"
+    contains "$(last_curl_call)" "*restarter/bb-bash/v0.1.2/docs/agents/bb-bash-rule.md*"
 }
 
 @test "install-agent: --rule skips when file already exists, no --force" {

@@ -11,21 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Project renamed from `bb-api` to `bb-bash`.** The on-disk binary is now `bbb` (was `bb-api`). (bb-bash-on9)
 - **All environment variables renamed** from `BB_API_*` to `BB_BASH_*` (13 vars: `BB_BASH_TOKEN`, `BB_BASH_EMAIL`, `BB_BASH_WORKSPACE`, `BB_BASH_REPO`, `BB_BASH_REMOTE`, `BB_BASH_REF`, `BB_BASH_USER_ONLY`, `BB_BASH_FORCE`, `BB_BASH_BATCH_DELAY`, `BB_BASH_TEST_LIVE`, `BB_BASH_TEST_WORKSPACE`, `BB_BASH_TEST_REPO`, `BB_BASH_SCRIPT`). (bb-bash-on9)
 - **Data directory** moved from `~/.local/share/bb-api/` to `~/.local/share/bb-bash/`. (bb-bash-on9)
-- **Agent integration artifacts renamed:** `docs/bb-bash-rule.md`, `docs/bb-bash-skill/SKILL.md`, `docs/bb-bash-agent-snippet.md`. Local destinations: `.claude/rules/bb-bash-rule.md`, `.claude/skills/bb-bash/SKILL.md`. Section marker changed from `## Bitbucket via bb-api` to `## Bitbucket via bb-bash`. (bb-bash-on9)
+- **Agent integration artifacts renamed and regrouped under `docs/agents/`:** `docs/agents/bb-bash-rule.md`, `docs/agents/bb-bash-skill/SKILL.md`, `docs/agents/bb-bash-snippet.md` (dropped redundant "agent" prefix). Local install destinations unchanged: `.claude/rules/bb-bash-rule.md`, `.claude/skills/bb-bash/SKILL.md`. Section marker changed from `## Bitbucket via bb-api` to `## Bitbucket via bb-bash`. (bb-bash-on9, bb-bash-6ru)
 - **GitHub repo renamed** to `restarter/bb-bash` (GitHub auto-redirects old URLs after the rename takes effect). (bb-bash-on9)
 - Beads task ID namespace prefix renamed from `bb-api-` to `bb-bash-` (via `bd rename-prefix`); commit-scope convention is now `feat(bb-bash-XXX): ...`. Pre-existing git commits retain the old `bb-api-XXX` scope (immutable history); use `bd show bb-bash-XXX` to look up the same tasks.
 
 ### Added
-- `docs/bb-bash-rule.md` — drop-in Claude Code rule (`.claude/rules/bb-bash-rule.md`) so AI agents auto-discover bb-bash as the canonical Bitbucket-PR tool. Short, always-on hint. (bb-bash-k9i)
-- `docs/bb-bash-skill/SKILL.md` — drop-in Claude Code skill (`.claude/skills/bb-bash/SKILL.md`) with full command reference + review/respond/cleanup workflows. Lazy-loaded — zero context cost until invoked. (bb-bash-k9i)
+- `docs/agents/bb-bash-rule.md` — drop-in Claude Code rule (`.claude/rules/bb-bash-rule.md`) so AI agents auto-discover bb-bash as the canonical Bitbucket-PR tool. Short, always-on hint. (bb-bash-k9i)
+- `docs/agents/bb-bash-skill/SKILL.md` — drop-in Claude Code skill (`.claude/skills/bb-bash/SKILL.md`) with full command reference + review/respond/cleanup workflows. Lazy-loaded — zero context cost until invoked. (bb-bash-k9i)
 - `bbb install-agent` subcommand — drops AI-agent integration artifacts into `$PWD` with combinable flags (`--rule`, `--skill`, `--claude`, `--agents`). Interactive prompt when no flag is given. `--dry-run` previews without writing; `--force` overwrites/re-appends. `BB_BASH_REF` env var pins the ref (default `main`). Top-level guard skips auth/repo resolution for this subcommand so it runs without `.env` or outside a Bitbucket repo. (bb-bash-k9i)
-- `docs/bb-bash-agent-snippet.md` — clean, no-wrapper version of the bb-bash CLAUDE.md section. Used by `install-agent --claude` / `--agents` as the canonical source. (bb-bash-k9i)
+- `docs/agents/bb-bash-snippet.md` — clean, no-wrapper version of the bb-bash CLAUDE.md section. Used by `install-agent --claude` / `--agents` as the canonical source. (bb-bash-k9i)
+- `docs/agents/README.md` — overview of all four integration artifacts (one-page menu, "pick any one — each is self-contained"). (bb-bash-6ru)
+- `docs/installation.md` — installer details (env-var overrides, manual install, security inspection) extracted from README. (bb-bash-6ru)
 - `stub_curl_download` helper in `test/test_helper.bash` — bats stub for `curl ... -o file` style download (complement to existing `stub_curl` API-call stub). (bb-bash-k9i)
 - README "For AI agents" section now lists three integration paths (CLAUDE.md snippet, rule, skill) with copy-paste curl one-liners for the rule and skill, plus a new "One-shot install" section showcasing `bbb install-agent`.
 
 ### Changed
 - README fully reframed around the AI-agent use case. Lead promises "tell your agent → done in a minute"; Quick Start is now a ready-to-paste prompt that walks an AI coding agent through running the installer, dropping integration artifacts, and prompting the user for credentials. Adds a "What ships out of the box" table contrasting CLAUDE.md / AGENTS.md / rule / skill, surfaces the session-restart caveat for rule/skill loading, and moves Security / Limitations / Authentication below the agent flow. Cross-tool focus broadened beyond Claude Code (Cursor, Copilot, Codex, Aider). (bb-bash-k9i)
-- `docs/CLAUDE.md.example` refactored from embedded code-fence wrapper into a short pointer document. The canonical snippet now lives in `docs/bb-bash-agent-snippet.md`. Cross-links to all three artifact files + recommends `bbb install-agent`. (bb-bash-k9i)
+- README v4 — human-first install (curl-pipe-bash at top), agent section dedicated after Setup (install-agent + ships-out-of-box table + agent prompt examples). Added "Pick any one — each artifact is fully self-contained" note above the table. Installer details extracted to `docs/installation.md`. (bb-bash-6ru)
+- `--claudemd` flag renamed to `--claude` for shorter CLI surface. (bb-bash-on9)
+- `docs/CLAUDE.md.example` deleted (redundant with README "For AI agents" section + new `docs/agents/README.md`). (bb-bash-6ru)
+- Brought `bb-bash-snippet.md` to full self-sufficiency (added token scopes, edit-own-only caveat, "When NOT to use" section, conventions block) so it works standalone like Rule/Skill. (bb-bash-6ru)
+- Standardized `## References` block across all 3 artifacts (same 3-link shape: commands.md, bb-bash repo, Bitbucket REST API). (bb-bash-6ru)
 - `bbb` top-level guard now short-circuits auth/repo resolution for `install-agent` / `help` subcommands so they run without `.env` or a Bitbucket-repo CWD. `usage()` uses defensive defaults (`${WORKSPACE:-<workspace>}`) so it renders correctly through the short-circuit path. (bb-bash-k9i)
 
 ## [0.1.1] - 2026-05-27

@@ -220,7 +220,7 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 **Idempotency:** by default skips any artifact that already exists. For `CLAUDE.md` / `AGENTS.md` the check is marker-based (`## Bitbucket via bb-bash`) — file may exist for other reasons without skipping. Re-running is safe.
 
-**Source:** artifacts are fetched from `https://raw.githubusercontent.com/restarter/bb-bash/${BB_BASH_REF:-main}/docs/`. Pin to a release tag for reproducibility:
+**Source:** artifacts are fetched from `https://raw.githubusercontent.com/restarter/bb-bash/${BB_BASH_REF:-main}/docs/agents/`. Pin to a release tag for reproducibility:
 
 ```bash
 BB_BASH_REF=v0.1.2 bbb install-agent --rule --skill --claude --agents
