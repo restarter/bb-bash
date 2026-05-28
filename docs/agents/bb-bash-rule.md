@@ -50,18 +50,20 @@ bbb pr open <id>
 
 - **Line numbers** in `pr inline` refer to the actual file line numbers, not diff line numbers.
 - **Inline mode** — use `pr inline` for new/modified code (`to:<line>` payload), `pr inline --old` for deleted/old code (`from:<line>` payload).
-- **Multi-line content** — pass via heredoc to preserve newlines:
+- **Multi-line content** — pass via single-quoted heredoc (`<<'EOF'`) to preserve newlines AND prevent variable / command substitution. Don't pre-escape `\$` or `` \` `` inside `<<'EOF'` — they pass through as literal `\$` and `` \` ``, which is rarely what you want.
 
   ```bash
   bbb pr comment 42 "$(cat <<'EOF'
-  Multi-line
-  comment body
+  Multi-line; $vars and `cmds` stay literal here.
   EOF
   )"
   ```
 
-- **Edit/delete** — Bitbucket only allows editing/deleting your own comments. Trying to touch another user's comment returns a 403.
+- **Edit/delete** — Bitbucket only allows editing/deleting your own comments. Trying to touch another user's comment returns a 403. `pr edit-comment` is a **full-body replace** (REST PUT), not a patch — pass the complete new text.
 - **Batch operations** — `pr approve` and `pr decline` accept multiple IDs and print one success line per PR.
+- **Force-push effect** — Bitbucket Cloud marks inline comments as "outdated" when the referenced line changes; the comment is preserved (not removed). After a force-push, re-post on the new line rather than relying on the stale one.
+- **Before approve** — run `git fetch && git log <previous-approve-ref>..HEAD` to see if commits landed after your last review. Some repos have "Reset approvals on new commits" enabled (auto-dismiss); others don't — when in doubt, redo the review.
+- **Comment markdown** — Bitbucket Cloud uses Python-Markdown. Supported: fenced code blocks with language (`` ```php ``), tables (pipe syntax), strikethrough (`~~text~~`), lists, links, blockquotes, mentions (`@accountname` or `@email`). **HTML tags are NOT supported.** Full reference: https://support.atlassian.com/bitbucket-cloud/docs/markup-comments/
 
 ## Review patterns
 

@@ -1,8 +1,8 @@
 # bb-bash (bbb)
 
-> **Bitbucket Cloud CLI built for AI coding agents** — single-file bash, with `CLAUDE.md` snippet, Rule, and Skill bundled out of the box.
+> **Bitbucket Cloud CLI built for AI coding agents** — single-file bash with zero-config repo auto-detect, plus `CLAUDE.md` snippet, Rule, and Skill bundled out of the box.
 
-`bbb` (the binary) wraps the Bitbucket Cloud REST API 2.0 so you and your AI agent can drive PR review, inline comments, approve, decline, merge, and create — all from chat or terminal, without leaving your editor. No build step, no package manager: one bash script, two dependencies (`curl`, `jq`).
+`bbb` (the binary) wraps the Bitbucket Cloud REST API 2.0 so you and your AI agent can drive PR review, inline comments, approve, decline, merge, and create — all from chat or terminal, without leaving your editor. `cd` into any Bitbucket-Cloud-backed repo and run `bbb pr list` — workspace/repo are auto-detected from `git remote`, no per-project setup. No build step, no package manager: one bash script, two dependencies (`curl`, `jq`).
 
 The drop-in artifacts (`CLAUDE.md` / `AGENTS.md` snippets + Claude Code **Rule** + Claude Code **Skill**) teach the AI agents you already use (Claude Code, Cursor, Copilot Chat, Codex, Aider, …) how to call `bbb` — no manual wiring. See [For AI agents](#for-ai-agents) for what each artifact does.
 
@@ -41,30 +41,41 @@ Workspace/repo are [auto-detected](#how-auto-detect-works) from `git remote`. Ov
 
 ## For AI agents
 
-Run `bbb install-agent` inside your project to drop integration artifacts so the AI agents you already use (Claude Code, Cursor, Copilot Chat, Codex, Aider, …) know how to call `bbb` without extra prompting.
+Run `bbb install-agent` inside your project — or with `--global` for every project at once — to drop integration artifacts so the AI agents you already use (Claude Code, Cursor, Copilot Chat, Codex, Aider, …) know how to call `bbb` without extra prompting.
+
+### Flags
+
+| Flag | Purpose |
+|---|---|
+| `--rule` / `--skill` / `--claude` / `--agents` | Pick the artifact(s) to install — see the table below |
+| `--global` | Install into `~/.claude/` instead of the current project; Claude Code auto-loads from there in every project. Works with `--rule` / `--skill` / `--claude`. `--agents` is project-only — no widely-adopted global path for `AGENTS.md`. |
+| `--dry-run` | Preview the writes without touching disk |
+| `--force` | Overwrite an existing artifact (default is skip-if-exists) |
+
+Pin to a release tag for reproducibility: `BB_BASH_REF=v0.2.0 bbb install-agent ...`. Full flag reference: [docs/commands.md#install-agent](docs/commands.md#install-agent).
+
+### Examples
 
 ```bash
-bbb install-agent --claude              # snippet → CLAUDE.md (works with any CLAUDE.md-reading agent)
-bbb install-agent --rule --skill        # Claude Code: rule (always-on hint) + skill (on-demand workflows)
-bbb install-agent --rule --global       # user-global rule (auto-loaded in every project)
-bbb install-agent --claude --dry-run    # preview without writing
-bbb install-agent --rule --force        # overwrite an existing artifact
+bbb install-agent --claude                 # snippet → ./CLAUDE.md (any CLAUDE.md-reading agent)
+bbb install-agent --rule --skill           # Claude Code: rule (always-on) + skill (on-demand)
+bbb install-agent --rule --global          # global rule — auto-loaded in every project
+bbb install-agent --rule --skill --global  # global rule + skill (Claude Code combo)
+bbb install-agent --claude --dry-run       # preview without writing
 ```
-
-Idempotent — re-run is safe; pin a release with `BB_BASH_REF=v0.2.0 bbb install-agent ...`. Pass `--global` (works with `--rule` / `--skill` / `--claude`) to install into `~/.claude/` for cross-project availability. `--agents` is project-only — no widely-adopted global path for `AGENTS.md`.
 
 ### What ships out of the box
 
 **Pick any one** — each artifact is fully self-contained. Your AI agent gets the same end result (install hint, auth, commands, conventions, workflows). Choose by your tool / preference; combine if you want.
 
-| Type | Lands at | Loading | Best for |
-|---|---|---|---|
-| `CLAUDE.md` | project root | every turn | Claude / Cursor / Copilot via `CLAUDE.md` |
-| `AGENTS.md` | project root | every turn | cross-tool agents (OpenAI Codex, Aider, Continue, …) |
-| Rule | `.claude/rules/bb-bash-rule.md` | session start | short always-on hint, "bbb exists, here's how" |
-| Skill | `.claude/skills/bb-bash/SKILL.md` | on-demand | full workflows (review, respond, batch cleanup); zero context cost until invoked |
+| Type | Project install | Global (`--global`) | Loading | Best for |
+|---|---|---|---|---|
+| `CLAUDE.md` | `./CLAUDE.md` | `~/.claude/CLAUDE.md` | every turn | Claude / Cursor / Copilot via `CLAUDE.md` |
+| `AGENTS.md` | `./AGENTS.md` | — *(project-only)* | every turn | cross-tool agents (OpenAI Codex, Aider, Continue, …) |
+| Rule | `./.claude/rules/bb-bash-rule.md` | `~/.claude/rules/bb-bash-rule.md` | session start | short always-on hint, "bbb exists, here's how" |
+| Skill | `./.claude/skills/bb-bash/SKILL.md` | `~/.claude/skills/bb-bash/SKILL.md` | on-demand | full workflows (review, respond, batch cleanup); zero context cost until invoked |
 
-Combine freely — `install-agent` accepts any subset of `--rule --skill --claude --agents`. Or browse and copy the sources by hand: [`docs/agents/`](docs/agents/) ([README](docs/agents/README.md)).
+Browse the artifact sources directly: [`docs/agents/`](docs/agents/) ([README](docs/agents/README.md)).
 
 ### Then ask your agent things like
 

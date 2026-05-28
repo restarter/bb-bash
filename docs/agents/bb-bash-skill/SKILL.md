@@ -138,15 +138,26 @@ bbb pr decline 65 67 89                                              # batch clo
 ## Conventions
 
 - **Line numbers**: `pr inline` takes actual file line numbers, NOT diff line numbers.
-- **Multi-line bodies**: pass through a heredoc so newlines survive shell quoting:
-  ```bash
-  bbb pr comment 42 "$(cat <<'EOF'
-  Paragraph one.
+- **Multi-line bodies — quote the heredoc:** always use `<<'EOF'` (single-quoted delimiter). It preserves newlines AND prevents the shell from substituting variables (`$var`) or running command substitutions (`` `cmd` ``). Don't pre-escape `\$` or `` \` `` inside `<<'EOF'` — they pass through as literal `\$` and `` \` ``, which is rarely what the comment should say.
 
-  Paragraph two with **markdown**.
+  ```bash
+  # CORRECT — single-quoted EOF: $vars and `cmds` stay literal in the comment
+  bbb pr comment 42 "$(cat <<'EOF'
+  PHP code: `$variable` and ${braces} render literally.
+  EOF
+  )"
+
+  # WRONG — unquoted EOF: bash expands $variable before posting
+  bbb pr comment 42 "$(cat <<EOF
+  $variable will be substituted from your shell environment!
   EOF
   )"
   ```
+
+- **edit-comment is full-body replace** (REST PUT semantics): pass the complete new text, not a diff/patch. Bitbucket only allows editing/deleting your own comments — a 403 from another user's comment is expected, don't retry.
+- **Force-push effect**: Bitbucket Cloud marks inline comments as "outdated" when the referenced line changes, but the comment is **preserved, not removed**. After a force-push that moved the line, prefer re-posting on the new line over editing the outdated one — the outdated comment is collapsed in the UI and easy to miss.
+- **Before approve**: run `git fetch && git log <previous-approve-ref>..HEAD` to see if commits landed after your last review. Bitbucket Cloud has a per-repo "Reset approvals on new commits" setting — if enabled, your approve auto-dismisses; if disabled, your approve persists across new commits. When in doubt, redo the review.
+- **Comment markdown — Bitbucket Cloud uses Python-Markdown**, NOT GitHub-Flavored Markdown. Supported: fenced code blocks with language (`` ```php ``, `` ```bash `` — syntax highlighting via `codehilite` extension), tables (pipe syntax, via `tables` extension), strikethrough (`~~text~~`, via `del`), lists, links, blockquotes, footnotes, headings. **Mentions:** `@accountname` or `@email` (not GitHub-style `@username`). **HTML tags are NOT supported** (no `<table>`, no `<br>`, no `<details>`). Full reference: https://support.atlassian.com/bitbucket-cloud/docs/markup-comments/
 - **Auto-detect**: workspace/repo are inferred from the bitbucket.org remote of the current directory. No env vars needed inside a Bitbucket repo. Override with `BB_BASH_REMOTE=<name>` when there are multiple remotes.
 - **Output**: plain text, no JSON wrapping unless using `bbb raw`. Parse with `jq` only when calling `bbb raw`.
 - **Token scopes**: `read:repository:bitbucket`, `read:pullrequest:bitbucket`, `write:pullrequest:bitbucket`. Optional: `read:pipeline:bitbucket` for `pr checks` to show Pipelines.
