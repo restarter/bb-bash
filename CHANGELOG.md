@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-28
+
 ### Changed (BREAKING — project rename)
 - **Project renamed from `bb-api` to `bb-bash`.** The on-disk binary is now `bbb` (was `bb-api`). (bb-bash-on9)
 - **All environment variables renamed** from `BB_API_*` to `BB_BASH_*` (13 vars: `BB_BASH_TOKEN`, `BB_BASH_EMAIL`, `BB_BASH_WORKSPACE`, `BB_BASH_REPO`, `BB_BASH_REMOTE`, `BB_BASH_REF`, `BB_BASH_USER_ONLY`, `BB_BASH_FORCE`, `BB_BASH_BATCH_DELAY`, `BB_BASH_TEST_LIVE`, `BB_BASH_TEST_WORKSPACE`, `BB_BASH_TEST_REPO`, `BB_BASH_SCRIPT`). (bb-bash-on9)
