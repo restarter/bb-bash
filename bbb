@@ -31,7 +31,7 @@
 #   bbb pr delete-comment <pr_id> <comment_id> - Delete a comment
 #   bbb raw <endpoint>                         - Raw API call (GET)
 #   bbb raw-post <endpoint> <json>             - Raw API call (POST)
-#   bbb install-agent [--rule] [--skill] [--claudemd] [--agents]
+#   bbb install-agent [--rule] [--skill] [--claude] [--agents]
 #                                                 - Drop AI-agent integration artifacts into $PWD
 
 set -euo pipefail
@@ -789,7 +789,7 @@ cmd_raw_post() {
 # run without auth or a Bitbucket-repo CWD — the top-level guard at the
 # bottom of this file short-circuits credential resolution for it.
 cmd_install_agent() {
-    local want_rule=false want_skill=false want_claudemd=false want_agents=false
+    local want_rule=false want_skill=false want_claude=false want_agents=false
     local has_flag=false
     INSTALL_AGENT_DRY_RUN=false
     INSTALL_AGENT_FORCE=false
@@ -798,20 +798,20 @@ cmd_install_agent() {
         case "$1" in
             --rule)     want_rule=true; has_flag=true ;;
             --skill)    want_skill=true; has_flag=true ;;
-            --claudemd) want_claudemd=true; has_flag=true ;;
+            --claude) want_claude=true; has_flag=true ;;
             --agents)   want_agents=true; has_flag=true ;;
             --dry-run)  INSTALL_AGENT_DRY_RUN=true ;;
             --force)    INSTALL_AGENT_FORCE=true ;;
             -h|--help)
                 cat <<'EOF'
-Usage: bbb install-agent [--rule] [--skill] [--claudemd] [--agents] [--dry-run] [--force]
+Usage: bbb install-agent [--rule] [--skill] [--claude] [--agents] [--dry-run] [--force]
 
 Drop AI-agent integration artifacts into the current directory.
 
 Artifacts (combine any subset):
   --rule       .claude/rules/bb-bash-rule.md       (Claude Code, auto-load)
   --skill      .claude/skills/bb-bash/SKILL.md     (Claude Code, lazy-load)
-  --claudemd   ./CLAUDE.md                         (append "## Bitbucket via bb-bash" section)
+  --claude   ./CLAUDE.md                         (append "## Bitbucket via bb-bash" section)
   --agents     ./AGENTS.md                         (append "## Bitbucket via bb-bash" section)
 
 Modifiers:
@@ -826,7 +826,7 @@ Env:
 
 Examples:
   bbb install-agent --rule --skill
-  bbb install-agent --claudemd --dry-run
+  bbb install-agent --claude --dry-run
   BB_BASH_REF=v0.1.2 bbb install-agent --rule --skill --agents
 EOF
                 return 0
@@ -840,7 +840,7 @@ EOF
         # Under set -e, read -r -p crashes with no message on EOF/closed-stdin
         # (CI, `bbb install-agent < /dev/null`, piped non-tty contexts).
         # Short-circuit with a clear instruction instead.
-        [[ -t 0 ]] || die "no flags provided and stdin is not a tty; specify --rule/--skill/--claudemd/--agents"
+        [[ -t 0 ]] || die "no flags provided and stdin is not a tty; specify --rule/--skill/--claude/--agents"
         echo "Project: $PWD"
         echo "Status:"
         _agent_status_line ".claude/rules/bb-bash-rule.md"
@@ -860,7 +860,7 @@ EOF
         [[ "$choice" =~ ^[rsca]+$ ]] || die "invalid letters in '$choice' (allowed: r/s/c/a, or q to quit)"
         [[ "$choice" == *r* ]] && want_rule=true
         [[ "$choice" == *s* ]] && want_skill=true
-        [[ "$choice" == *c* ]] && want_claudemd=true
+        [[ "$choice" == *c* ]] && want_claude=true
         [[ "$choice" == *a* ]] && want_agents=true
     fi
 
@@ -874,7 +874,7 @@ EOF
 
     $want_rule     && _install_agent_fetch "bb-bash-rule.md"        ".claude/rules/bb-bash-rule.md"
     $want_skill    && _install_agent_fetch "bb-bash-skill/SKILL.md" ".claude/skills/bb-bash/SKILL.md"
-    $want_claudemd && _install_agent_md_section "CLAUDE.md"
+    $want_claude && _install_agent_md_section "CLAUDE.md"
     $want_agents   && _install_agent_md_section "AGENTS.md"
 
     echo "Done."
@@ -906,7 +906,7 @@ usage() {
     echo "  bbb pr delete-comment <pr_id> <comment_id>   Delete a comment"
     echo "  bbb raw <endpoint>                           Raw GET  (e.g. /pullrequests)"
     echo "  bbb raw-post <endpoint> <json>               Raw POST"
-    echo "  bbb install-agent [--rule] [--skill] [--claudemd] [--agents] [--dry-run] [--force]"
+    echo "  bbb install-agent [--rule] [--skill] [--claude] [--agents] [--dry-run] [--force]"
     echo "                                                  Drop AI-agent integration artifacts into \$PWD"
     echo ""
     echo "Inline comments: omit --old for new/added lines, include --old for deleted lines."

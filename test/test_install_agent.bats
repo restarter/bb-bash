@@ -31,7 +31,7 @@ _run_bbb() {
     [ "$status" -eq 0 ]
     contains "$output" "*--rule*"
     contains "$output" "*--skill*"
-    contains "$output" "*--claudemd*"
+    contains "$output" "*--claude*"
     contains "$output" "*--agents*"
     contains "$output" "*BB_BASH_REF*"
 }
@@ -52,8 +52,8 @@ _run_bbb() {
     [ ! -e "$TEST_TMP/.claude/rules/bb-bash-rule.md" ]
 }
 
-@test "install-agent: --rule --skill --claudemd --agents --dry-run all four lines, no writes" {
-    _run_bbb install-agent --rule --skill --claudemd --agents --dry-run
+@test "install-agent: --rule --skill --claude --agents --dry-run all four lines, no writes" {
+    _run_bbb install-agent --rule --skill --claude --agents --dry-run
     [ "$status" -eq 0 ]
     contains "$output" "*bb-bash-rule.md*"
     contains "$output" "*SKILL.md*"
@@ -104,21 +104,21 @@ _run_bbb() {
 
 # --- CLAUDE.md / AGENTS.md modes ---
 
-@test "install-agent: --claudemd creates CLAUDE.md when missing" {
+@test "install-agent: --claude creates CLAUDE.md when missing" {
     stub_curl_download "## Bitbucket via bb-bash
 content"
-    _run_bbb install-agent --claudemd
+    _run_bbb install-agent --claude
     [ "$status" -eq 0 ]
     [ -f "$TEST_TMP/CLAUDE.md" ]
     grep -q "Bitbucket via bb-bash" "$TEST_TMP/CLAUDE.md"
     contains "$output" "*created*"
 }
 
-@test "install-agent: --claudemd appends to existing CLAUDE.md without bbb section" {
+@test "install-agent: --claude appends to existing CLAUDE.md without bbb section" {
     echo "# My project" > "$TEST_TMP/CLAUDE.md"
     stub_curl_download "## Bitbucket via bb-bash
 content"
-    _run_bbb install-agent --claudemd
+    _run_bbb install-agent --claude
     [ "$status" -eq 0 ]
     grep -q "My project" "$TEST_TMP/CLAUDE.md"
     grep -q "Bitbucket via bb-bash" "$TEST_TMP/CLAUDE.md"
@@ -126,26 +126,26 @@ content"
     contains "$output" "*appended*"
 }
 
-@test "install-agent: --claudemd skips when CLAUDE.md already has bbb section" {
+@test "install-agent: --claude skips when CLAUDE.md already has bbb section" {
     printf '# Project\n\n## Bitbucket via bb-bash\nold content\n' > "$TEST_TMP/CLAUDE.md"
     stub_curl_download "new content"
-    _run_bbb install-agent --claudemd
+    _run_bbb install-agent --claude
     [ "$status" -eq 0 ]
     contains "$output" "*already has*"
     grep -q "old content" "$TEST_TMP/CLAUDE.md"
 }
 
-@test "install-agent: --claudemd --force re-appends even when section exists" {
+@test "install-agent: --claude --force re-appends even when section exists" {
     printf '# Project\n\n## Bitbucket via bb-bash\nold content\n' > "$TEST_TMP/CLAUDE.md"
     stub_curl_download "## Bitbucket via bb-bash
 new content"
-    _run_bbb install-agent --claudemd --force
+    _run_bbb install-agent --claude --force
     [ "$status" -eq 0 ]
     contains "$output" "*appended*"
     [ "$(grep -c 'Bitbucket via bb-bash' "$TEST_TMP/CLAUDE.md")" = "2" ]
 }
 
-@test "install-agent: --agents writes AGENTS.md (parallel to claudemd)" {
+@test "install-agent: --agents writes AGENTS.md (parallel to --claude)" {
     stub_curl_download "## Bitbucket via bb-bash
 agents content"
     _run_bbb install-agent --agents
@@ -157,10 +157,10 @@ agents content"
 
 # --- combined flags (real-world "all four at once") ---
 
-@test "install-agent: --rule --skill --claudemd --agents writes all four in one run" {
+@test "install-agent: --rule --skill --claude --agents writes all four in one run" {
     stub_curl_download "## Bitbucket via bb-bash
 combined content"
-    _run_bbb install-agent --rule --skill --claudemd --agents
+    _run_bbb install-agent --rule --skill --claude --agents
     [ "$status" -eq 0 ]
     [ -f "$TEST_TMP/.claude/rules/bb-bash-rule.md" ]
     [ -f "$TEST_TMP/.claude/skills/bb-bash/SKILL.md" ]

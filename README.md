@@ -58,8 +58,8 @@ Workspace/repo are auto-detected from `git remote`. Override with `BB_BASH_WORKS
 `bbb install-agent` drops integration artifacts so the AI agents you already use (Claude Code, Cursor, Copilot Chat, Codex, Aider, …) know how to call bb-bash without extra prompting.
 
 ```bash
-bbb install-agent --rule --skill --claudemd --agents   # drop all four
-bbb install-agent --claudemd --dry-run                  # preview without writing
+bbb install-agent --rule --skill --claude --agents   # drop all four
+bbb install-agent --claude --dry-run                  # preview without writing
 bbb install-agent --rule --force                        # overwrite existing
 ```
 
@@ -74,7 +74,7 @@ Idempotent — re-run is safe; pin a release with `BB_BASH_REF=v0.2.0 bbb instal
 | **Rule** | `.claude/rules/bb-bash-rule.md` | session start | short always-on hint, "bbb exists, here's how" |
 | **Skill** | `.claude/skills/bb-bash/SKILL.md` | on-demand | full workflows (review, respond, batch cleanup); zero context cost until invoked |
 
-Pick what fits your stack — `install-agent` accepts any combination of `--rule --skill --claudemd --agents`.
+Pick what fits your stack — `install-agent` accepts any combination of `--rule --skill --claude --agents`.
 
 ### Then ask your agent things like
 

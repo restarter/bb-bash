@@ -11,11 +11,11 @@ Or run one command from inside your project to do any combination automatically:
 
 ```bash
 bbb install-agent              # interactive
-bbb install-agent --claudemd   # writes/appends to CLAUDE.md
+bbb install-agent --claude   # writes/appends to CLAUDE.md
 bbb install-agent --agents     # writes/appends to AGENTS.md
 bbb install-agent --rule       # drops .claude/rules/bb-bash-rule.md
 bbb install-agent --skill      # drops .claude/skills/bb-bash/SKILL.md
-bbb install-agent --rule --skill --claudemd --agents   # all four
+bbb install-agent --rule --skill --claude --agents   # all four
 ```
 
 See `bbb install-agent --help` for `--dry-run` / `--force` / `BB_BASH_REF` pinning.

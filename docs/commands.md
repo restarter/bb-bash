@@ -203,9 +203,9 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 ## install-agent
 
 **Synopsis:**
-- `bbb install-agent [--rule] [--skill] [--claudemd] [--agents] [--dry-run] [--force]`
+- `bbb install-agent [--rule] [--skill] [--claude] [--agents] [--dry-run] [--force]`
 
-**Description:** Drop AI-agent integration artifacts into the current directory. Combine any subset of `--rule`, `--skill`, `--claudemd`, `--agents`. Without flags, prompts interactively for letter codes (`rsca`). Unlike `pr` and `raw`, this command does NOT require `.env` credentials or a Bitbucket-repo CWD — it runs from any directory.
+**Description:** Drop AI-agent integration artifacts into the current directory. Combine any subset of `--rule`, `--skill`, `--claude`, `--agents`. Without flags, prompts interactively for letter codes (`rsca`). Unlike `pr` and `raw`, this command does NOT require `.env` credentials or a Bitbucket-repo CWD — it runs from any directory.
 
 **Flags:**
 
@@ -213,7 +213,7 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 |------|-------------|----------|
 | `--rule` | `./.claude/rules/bb-bash-rule.md` | Claude Code-only, auto-loaded into every context |
 | `--skill` | `./.claude/skills/bb-bash/SKILL.md` | Claude Code-only, lazy-loaded when invoked |
-| `--claudemd` | `./CLAUDE.md` | Append `## Bitbucket via bb-bash` section (create file if missing) |
+| `--claude` | `./CLAUDE.md` | Append `## Bitbucket via bb-bash` section (create file if missing) |
 | `--agents` | `./AGENTS.md` | Same section, written to `AGENTS.md` (cross-tool standard) |
 | `--dry-run` | — | Print actions, write nothing to disk |
 | `--force` | — | Overwrite existing files / re-append section even if marker is present |
@@ -223,7 +223,7 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 **Source:** artifacts are fetched from `https://raw.githubusercontent.com/restarter/bb-bash/${BB_BASH_REF:-main}/docs/`. Pin to a release tag for reproducibility:
 
 ```bash
-BB_BASH_REF=v0.1.2 bbb install-agent --rule --skill --claudemd --agents
+BB_BASH_REF=v0.1.2 bbb install-agent --rule --skill --claude --agents
 ```
 
 **Examples:**
@@ -231,8 +231,8 @@ BB_BASH_REF=v0.1.2 bbb install-agent --rule --skill --claudemd --agents
 ```bash
 bbb install-agent                                        # interactive
 bbb install-agent --rule --skill                         # Claude Code-native pair
-bbb install-agent --rule --skill --claudemd --agents     # everything
-bbb install-agent --claudemd --dry-run                   # preview without writing
+bbb install-agent --rule --skill --claude --agents     # everything
+bbb install-agent --claude --dry-run                   # preview without writing
 bbb install-agent --rule --force                         # overwrite existing rule
 ```
 
