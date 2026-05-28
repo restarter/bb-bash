@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 #
-# bb-api installer
+# bb-bash installer
 # Usage:
-#   curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/restarter/bb-api/main/scripts/install.sh | bash
+#   curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/restarter/bb-bash/main/scripts/install.sh | bash
 #
 # Re-run to update. Never touches .env.
 #
 # IMPORTANT: must be EXECUTED, never SOURCED for production use (set -e
 # would kill the user's shell on errors). Tests source it; the guard at
-# the bottom skips _bb_api_install_main() when sourced. Helpers are at
+# the bottom skips _bbb_install_main() when sourced. Helpers are at
 # top level (testable); orchestration lives in the wrapper. Truncation-safe
 # either way — see the architecture note in the plan.
 #
 
 set -euo pipefail
 
-REPO="restarter/bb-api"
-BIN_NAME="bb-api"
+REPO="restarter/bb-bash"
+BIN_NAME="bbb"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}"
 API_BASE="https://api.github.com/repos/${REPO}"
 
@@ -44,7 +44,7 @@ _step_call() {
 
 _print_header() {
     printf '%b\n' "
-   ${BOLD}bb-api installer${NC}
+   ${BOLD}bb-bash installer${NC}
    ${DIM}https://github.com/${REPO}${NC}
 " >&2
 }
@@ -61,7 +61,7 @@ die()         { log_error "$1"; exit 1; }
 check_deps() {
     command -v curl >/dev/null 2>&1 || die "curl not found. Install curl and retry."
     if ! command -v jq >/dev/null 2>&1; then
-        log_warning "jq not found — bb-api needs it at runtime, install with:"
+        log_warning "jq not found — bbb needs it at runtime, install with:"
         case "$(uname -s)" in
             Darwin) log_info "    brew install jq" ;;
             Linux)  log_info "    sudo apt install jq  # or: dnf, pacman, ..." ;;
@@ -73,11 +73,11 @@ check_deps() {
 }
 
 # pick_install_dir <preferred> <fallback>: testable; tries $1 if writable
-# AND BB_API_USER_ONLY not set, else creates and returns $2.
+# AND BB_BASH_USER_ONLY not set, else creates and returns $2.
 # No auto-sudo — surprise sudo prompts on `curl | bash` are bad UX.
 pick_install_dir() {
     local preferred=$1 fallback=$2
-    if [ -z "${BB_API_USER_ONLY:-}" ] && [ -w "$preferred" ] 2>/dev/null; then
+    if [ -z "${BB_BASH_USER_ONLY:-}" ] && [ -w "$preferred" ] 2>/dev/null; then
         echo "$preferred"
     else
         mkdir -p "$fallback"
@@ -87,7 +87,7 @@ pick_install_dir() {
 
 pick_data_dir() {
     local base="${XDG_DATA_HOME:-$HOME/.local/share}"
-    echo "$base/bb-api"
+    echo "$base/bb-bash"
 }
 
 path_contains() {
@@ -98,7 +98,7 @@ path_contains() {
 }
 
 # _resolve_symlink_chain: portable multi-hop symlink resolution with hop cap.
-# Mirrors bb-api's resolve_script_dir so install.sh has the same behavior
+# Mirrors bbb's resolve_script_dir so install.sh has the same behavior
 # for multi-binary detection.
 _resolve_symlink_chain() {
     local target=$1 link hops=0
@@ -117,9 +117,9 @@ _resolve_symlink_chain() {
     printf '%s\n' "$target"
 }
 
-# find_bb_api_on_path: print unique resolved paths to `bb-api` on $PATH.
+# find_bbb_on_path: print unique resolved paths to `bbb` on $PATH.
 # Uses _resolve_symlink_chain for multi-hop chains.
-find_bb_api_on_path() {
+find_bbb_on_path() {
     local IFS=':'
     local p resolved seen=""
     for p in $PATH; do
@@ -185,7 +185,7 @@ download_file() {
 # --- PATH / multi-binary helpers ---
 
 # check_path_and_multi_binary: emit PATH-membership warning + detect duplicate
-# bb-api copies on $PATH. Uses _resolve_symlink_chain for multi-hop chains.
+# bbb copies on $PATH. Uses _resolve_symlink_chain for multi-hop chains.
 check_path_and_multi_binary() {
     local target_bin_dir=$BIN_DIR
 
@@ -204,7 +204,7 @@ check_path_and_multi_binary() {
     local line
     while IFS= read -r line; do
         [ -n "$line" ] && copies+=("$line")
-    done < <(find_bb_api_on_path)
+    done < <(find_bbb_on_path)
     local copies_count=${#copies[@]}
 
     if [ "$copies_count" -gt 1 ]; then
@@ -225,13 +225,13 @@ check_path_and_multi_binary() {
 final_message() {
     local tag=$1
     printf '%b\n' "
-   ${GREEN}${BOLD}bb-api ${tag} ready${NC} at ${BOLD}${BIN_DIR}/${BIN_NAME}${NC}
+   ${GREEN}${BOLD}bb-bash ${tag} ready${NC} at ${BOLD}${BIN_DIR}/${BIN_NAME}${NC}
 
    ${CYAN}${BOLD}Next steps${NC}
      1. Edit ${BOLD}${DATA_DIR}/.env${NC} with your Bitbucket credentials.
         Token: ${DIM}https://bitbucket.org/account/settings/api-tokens/${NC}
      2. cd into any bitbucket.org repo and run:
-        ${BOLD}bb-api pr list${NC}
+        ${BOLD}bbb pr list${NC}
 
    ${DIM}Docs: https://github.com/${REPO}#readme${NC}
    ${DIM}Re-run this installer to update; .env is never touched.${NC}
@@ -240,7 +240,7 @@ final_message() {
 
 # --- Orchestration wrapper ---
 # Holds the step sequence + control flow. Helpers are above, testable.
-_bb_api_install_main() {
+_bbb_install_main() {
     _print_header
 
     _step_call "Checking dependencies"
@@ -249,7 +249,7 @@ _bb_api_install_main() {
     _step_call "Detecting install paths"
     BIN_DIR=$(pick_install_dir "/usr/local/bin" "$HOME/.local/bin")
     DATA_DIR=$(pick_data_dir)
-    if [ -z "${BB_API_USER_ONLY:-}" ] && [ "$BIN_DIR" = "/usr/local/bin" ]; then
+    if [ -z "${BB_BASH_USER_ONLY:-}" ] && [ "$BIN_DIR" = "/usr/local/bin" ]; then
         log_info "bin:  ${BOLD}$BIN_DIR${NC} (system)"
     else
         log_info "bin:  ${BOLD}$BIN_DIR${NC} (user)"
@@ -291,15 +291,15 @@ _bb_api_install_main() {
     download_file "${RAW_BASE}/${TAG}/.env.example"   "${DOWNLOAD_TMP}/.env.example"   || die "Download failed: .env.example"
     log_success "Fetched ${BIN_NAME} and .env.example"
 
-    # Sanity-check the downloaded bb-api is actually a bash script.
+    # Sanity-check the downloaded bbb is actually a bash script.
     head -1 "${DOWNLOAD_TMP}/${BIN_NAME}" | grep -q '^#!/usr/bin/env bash' \
-        || die "Downloaded file doesn't look like bb-api (missing shebang)."
+        || die "Downloaded file doesn't look like bbb(missing shebang)."
 
     _step_call "Installing"
 
-    # Atomic install: bb-api lands as `bb-api.new` first, then `mv` into the
+    # Atomic install: bbb lands as `bbb.new` first, then `mv` into the
     # final name on the same filesystem (rename is atomic). A crash mid-install
-    # leaves an old bb-api in place rather than a half-written file.
+    # leaves an old bbb in place rather than a half-written file.
     cp "${DOWNLOAD_TMP}/${BIN_NAME}" "${DATA_DIR}/${BIN_NAME}.new"
     chmod +x "${DATA_DIR}/${BIN_NAME}.new"
     mv "${DATA_DIR}/${BIN_NAME}.new" "${DATA_DIR}/${BIN_NAME}"
@@ -325,15 +325,15 @@ _bb_api_install_main() {
         log_info "Edit it with your Bitbucket credentials before first use."
     fi
 
-    # Symlink into PATH. Refuse non-symlink overwrite unless BB_API_FORCE=1.
+    # Symlink into PATH. Refuse non-symlink overwrite unless BB_BASH_FORCE=1.
     # Warn when an existing symlink points somewhere other than our data dir.
     mkdir -p "$BIN_DIR"
     if [ -e "${BIN_DIR}/${BIN_NAME}" ] && [ ! -L "${BIN_DIR}/${BIN_NAME}" ]; then
-        if [ "${BB_API_FORCE:-}" = "1" ]; then
-            log_warning "Removing existing non-symlink ${BIN_DIR}/${BIN_NAME} (BB_API_FORCE=1)."
+        if [ "${BB_BASH_FORCE:-}" = "1" ]; then
+            log_warning "Removing existing non-symlink ${BIN_DIR}/${BIN_NAME} (BB_BASH_FORCE=1)."
             rm -f "${BIN_DIR}/${BIN_NAME}"
         else
-            die "${BIN_DIR}/${BIN_NAME} exists and is not a symlink. Refusing to overwrite. Remove it or re-run with BB_API_FORCE=1."
+            die "${BIN_DIR}/${BIN_NAME} exists and is not a symlink. Refusing to overwrite. Remove it or re-run with BB_BASH_FORCE=1."
         fi
     elif [ -L "${BIN_DIR}/${BIN_NAME}" ]; then
         local existing_target
@@ -364,5 +364,5 @@ _bb_api_install_main() {
 # $0 ("bash") so the comparison succeeds and main runs. Without the :-$0 the
 # bare ${BASH_SOURCE[0]} triggers `set -u` "unbound variable" before main.
 if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
-    _bb_api_install_main "$@"
+    _bbb_install_main "$@"
 fi

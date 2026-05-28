@@ -56,20 +56,20 @@ No build step. Single bash script.
 
 ```bash
 # Lint
-shellcheck bb-api test/test_helper.bash scripts/install.sh
+shellcheck bbb test/test_helper.bash scripts/install.sh
 
 # Tests (bats-core 1.x — install via 'brew install bats-core' or build from source)
 bats test/*.bats
 
 # Live API tests (optional, hits real Bitbucket — see docs/contributing.md)
-BB_API_TEST_LIVE=1 ... bats test/test_live.bats
+BB_BASH_TEST_LIVE=1 ... bats test/test_live.bats
 ```
 
 CI: see `.github/workflows/ci.yml` — runs shellcheck + bats on push/PR (SHA-pinned actions, bats-core installed from upstream).
 
 ## Architecture Overview
 
-Single-file bash script (`bb-api`), divided into clearly-labeled sections. See [docs/design.md](docs/design.md) for full details. Quick map:
+Single-file bash script (`bbb`), divided into clearly-labeled sections. See [docs/design.md](docs/design.md) for full details. Quick map:
 
 1. Usage docstring (header comment)
 2. Helpers (`die`, `resolve_script_dir`, `require_args`, `resolve_workspace_repo`, `batch_action`)

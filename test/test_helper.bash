@@ -7,23 +7,23 @@
 # linter stays useful for the rest of the file.
 
 # Locate script path
-export BB_API_SCRIPT="${BB_API_SCRIPT:-$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)/bb-api}"
+export BB_BASH_SCRIPT="${BB_BASH_SCRIPT:-$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)/bbb}"
 
-# load_bb_api: source bb-api (function definitions only — the top-level
+# load_bbb: source bbb (function definitions only — the top-level
 # imperative block is BASH_SOURCE-guarded so sourcing skips it).
 # Then set WORKSPACE/REPO/BASE_URL/AUTH manually for test isolation.
-load_bb_api() {
+load_bbb() {
     # Force test env values (do not inherit caller's real credentials!)
-    export BB_API_EMAIL="test@example.com"
-    export BB_API_TOKEN="test-token"
-    export BB_API_BATCH_DELAY="0"
-    unset BB_API_REMOTE BB_API_WORKSPACE BB_API_REPO
+    export BB_BASH_EMAIL="test@example.com"
+    export BB_BASH_TOKEN="test-token"
+    export BB_BASH_BATCH_DELAY="0"
+    unset BB_BASH_REMOTE BB_BASH_WORKSPACE BB_BASH_REPO
 
     # shellcheck source=/dev/null
-    source "$BB_API_SCRIPT"
+    source "$BB_BASH_SCRIPT"
 
     # Set globals that the real top-level block would have set.
-    # (Used by sourced bb-api helpers — disable SC2034 since lint can't
+    # (Used by sourced bbb helpers — disable SC2034 since lint can't
     # follow sourcing across files.)
     # shellcheck disable=SC2034
     WORKSPACE="testws"
@@ -32,7 +32,7 @@ load_bb_api() {
     # shellcheck disable=SC2034
     BASE_URL="https://api.bitbucket.org/2.0/repositories/${WORKSPACE}/${REPO}"
     # shellcheck disable=SC2034
-    AUTH="${BB_API_EMAIL}:${BB_API_TOKEN}"
+    AUTH="${BB_BASH_EMAIL}:${BB_BASH_TOKEN}"
 }
 
 # stub_paths: prepare a temp dir on PATH where we drop fake commands

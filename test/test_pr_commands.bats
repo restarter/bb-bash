@@ -4,7 +4,7 @@ load test_helper
 
 setup() {
     stub_paths
-    load_bb_api
+    load_bbb
 }
 
 teardown() {

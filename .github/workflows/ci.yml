@@ -18,9 +18,9 @@ jobs:
       - name: Run shellcheck
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38  # 2.0.0
         with:
-          # Lint bb-api, test_helper.bash, and scripts/install.sh. Skip .bats
+          # Lint bbb, test_helper.bash, and scripts/install.sh. Skip .bats
           # files (they use @test syntax that shellcheck doesn't parse).
-          additional_files: 'bb-api test/test_helper.bash scripts/install.sh'
+          additional_files: 'bbb test/test_helper.bash scripts/install.sh'
           ignore_paths: 'test'
 
   bats:
@@ -38,5 +38,5 @@ jobs:
           git clone https://github.com/bats-core/bats-core.git /tmp/bats
           git -C /tmp/bats checkout 5da66876b8b619235aee1eb3e54954eaca88059b  # v1.11.0
           sudo /tmp/bats/install.sh /usr/local
-      - name: Run bats tests (excluding test_live.bats — gated by BB_API_TEST_LIVE)
+      - name: Run bats tests (excluding test_live.bats — gated by BB_BASH_TEST_LIVE)
         run: bats test/test_helpers.bats test/test_pr_commands.bats test/test_script_dir.bats test/test_install_helpers.bats

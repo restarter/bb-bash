@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# bb-api - Bitbucket Cloud API wrapper
+# bb-bash - Bitbucket Cloud API wrapper
 #
 # Reads credentials from .env file next to the *real* script (symlinks are
 # resolved through resolve_script_dir, so a PATH symlink at /usr/local/bin or
@@ -9,29 +9,29 @@
 # documented in README.md / scripts/install.sh.
 #
 # Usage (see usage() for the live list; this header summarizes):
-#   bb-api pr list [--state=<s>] [--author=<u>]   - List PRs (default: open)
-#   bb-api pr create <target> <title> [desc]      - Create PR from current branch
-#   bb-api pr update <id> [--title=...] [--description=...] [--reviewers=u1,u2]
+#   bbb pr list [--state=<s>] [--author=<u>]   - List PRs (default: open)
+#   bbb pr create <target> <title> [desc]      - Create PR from current branch
+#   bbb pr update <id> [--title=...] [--description=...] [--reviewers=u1,u2]
 #                                                 - Update PR metadata
-#   bb-api pr show <id>                           - PR details + changed files
-#   bb-api pr open <id>                           - Open PR in default browser
-#   bb-api pr diff <id>                           - Full diff
-#   bb-api pr checks <id>                         - CI statuses + Bitbucket Pipelines
-#   bb-api pr comments <id>                       - List comments
-#   bb-api pr comment <id> <text>                 - Add general comment
-#   bb-api pr inline [--old] <id> <path> <line> <text>
+#   bbb pr show <id>                           - PR details + changed files
+#   bbb pr open <id>                           - Open PR in default browser
+#   bbb pr diff <id>                           - Full diff
+#   bbb pr checks <id>                         - CI statuses + Bitbucket Pipelines
+#   bbb pr comments <id>                       - List comments
+#   bbb pr comment <id> <text>                 - Add general comment
+#   bbb pr inline [--old] <id> <path> <line> <text>
 #                                                 - Inline comment (default new code; --old for deleted)
-#   bb-api pr approve <id> [id ...]               - Approve PR(s), batch-capable
-#   bb-api pr decline <id> [id ...]               - Decline (close without merge), batch-capable
-#   bb-api pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=...]
+#   bbb pr approve <id> [id ...]               - Approve PR(s), batch-capable
+#   bbb pr decline <id> [id ...]               - Decline (close without merge), batch-capable
+#   bbb pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=...]
 #                                                 - Merge PR (default strategy: merge_commit)
-#   bb-api pr reply <pr_id> <comment_id> <text>   - Reply to a comment
-#   bb-api pr edit-comment <pr_id> <comment_id> <text>
+#   bbb pr reply <pr_id> <comment_id> <text>   - Reply to a comment
+#   bbb pr edit-comment <pr_id> <comment_id> <text>
 #                                                 - Edit a comment
-#   bb-api pr delete-comment <pr_id> <comment_id> - Delete a comment
-#   bb-api raw <endpoint>                         - Raw API call (GET)
-#   bb-api raw-post <endpoint> <json>             - Raw API call (POST)
-#   bb-api install-agent [--rule] [--skill] [--claudemd] [--agents]
+#   bbb pr delete-comment <pr_id> <comment_id> - Delete a comment
+#   bbb raw <endpoint>                         - Raw API call (GET)
+#   bbb raw-post <endpoint> <json>             - Raw API call (POST)
+#   bbb install-agent [--rule] [--skill] [--claude] [--agents]
 #                                                 - Drop AI-agent integration artifacts into $PWD
 
 set -euo pipefail
@@ -44,16 +44,16 @@ set -euo pipefail
 
 # Resolve workspace/repo from git remote (or env override).
 # Precedence:
-#   1. $BB_API_REMOTE → use that remote's URL
+#   1. $BB_BASH_REMOTE → use that remote's URL
 #   2. 'origin' if its URL matches bitbucket.org
 #   3. First remote whose URL matches bitbucket.org
-#   4. $BB_API_WORKSPACE + $BB_API_REPO env vars
+#   4. $BB_BASH_WORKSPACE + $BB_BASH_REPO env vars
 #   5. Error with help
 resolve_workspace_repo() {
     local url remote
-    if [[ -n "${BB_API_REMOTE:-}" ]]; then
-        url=$(git remote get-url -- "$BB_API_REMOTE" 2>/dev/null) \
-            || die "BB_API_REMOTE='$BB_API_REMOTE' is not a known git remote in this directory"
+    if [[ -n "${BB_BASH_REMOTE:-}" ]]; then
+        url=$(git remote get-url -- "$BB_BASH_REMOTE" 2>/dev/null) \
+            || die "BB_BASH_REMOTE='$BB_BASH_REMOTE' is not a known git remote in this directory"
     else
         url=$(git remote get-url origin 2>/dev/null || true)
         if ! [[ "$url" =~ (^|@|/)bitbucket\.org[:/] ]]; then
@@ -88,15 +88,15 @@ resolve_workspace_repo() {
             die "Invalid repo slug parsed from remote URL: '$REPO' (URL: $url)"
         fi
     else
-        WORKSPACE="${BB_API_WORKSPACE:-}"
-        REPO="${BB_API_REPO:-}"
+        WORKSPACE="${BB_BASH_WORKSPACE:-}"
+        REPO="${BB_BASH_REPO:-}"
         if [[ -z "$WORKSPACE" || -z "$REPO" ]]; then
             die "Cannot resolve Bitbucket workspace/repo.
 Tried in order:
-  1. \$BB_API_REMOTE env var
+  1. \$BB_BASH_REMOTE env var
   2. 'origin' remote (must point to bitbucket.org)
   3. Any remote pointing to bitbucket.org
-  4. \$BB_API_WORKSPACE and \$BB_API_REPO env vars
+  4. \$BB_BASH_WORKSPACE and \$BB_BASH_REPO env vars
 
 Set env vars or run from a directory inside a bitbucket.org repo."
         fi
@@ -106,12 +106,12 @@ Set env vars or run from a directory inside a bitbucket.org repo."
 # --- Helpers ---
 die() { echo "Error: $*" >&2; exit 1; }
 
-# resolve_script_dir: print the directory containing the *real* bb-api script,
+# resolve_script_dir: print the directory containing the *real* bbb script,
 # resolving any chain of symlinks portably (no `readlink -f` / `realpath` —
 # macOS bash 3.2 only has BSD readlink). Used at startup to anchor .env
 # discovery to the real script location, not the directory of the symlink it
 # was invoked through. Defined here in Helpers (not inside the BASH_SOURCE
-# guard) so tests can source bb-api and exercise this function directly
+# guard) so tests can source bbb and exercise this function directly
 # without firing main().
 #
 # Bails via `die` on cycle (40-hop cap) or broken-symlink (resolved target's
@@ -138,7 +138,7 @@ resolve_script_dir() {
     done
     local dir
     dir=$(dirname -- "$target")
-    [[ -d "$dir" ]] || die "cannot resolve bb-api source: $target (broken symlink?)"
+    [[ -d "$dir" ]] || die "cannot resolve bbb source: $target (broken symlink?)"
     cd -- "$dir" && pwd
 }
 
@@ -248,7 +248,7 @@ api_delete() {
 
 # batch_action <label> <endpoint-template> <jq-success-msg> "$@"
 # Loop over 1+ PR IDs, call api_post --soft on each, print per-PR result.
-# Sleep 0.3s (or $BB_API_BATCH_DELAY) between calls when total > 1.
+# Sleep 0.3s (or $BB_BASH_BATCH_DELAY) between calls when total > 1.
 #
 # Arguments:
 #   $1 = label              human verb past tense (e.g. "approved by", "declined")
@@ -276,19 +276,19 @@ batch_action() {
             printf 'PR #%-5s error: %s\n' "$id" "$err"
         fi
         if [[ $total -gt 1 && $i -lt $total ]]; then
-            sleep "${BB_API_BATCH_DELAY:-0.3}"
+            sleep "${BB_BASH_BATCH_DELAY:-0.3}"
         fi
     done
 }
 
 # _install_agent_fetch <src-rel-path> <dest-abs-or-rel-path>
-# Download docs/<src> from the bb-api repo (ref from BB_API_REF, default main)
+# Download docs/<src> from the bbb repo (ref from BB_BASH_REF, default main)
 # and write to <dest>. Honors $INSTALL_AGENT_DRY_RUN and $INSTALL_AGENT_FORCE
 # (set by cmd_install_agent before calling).
 _install_agent_fetch() {
     local src="$1" dest="$2"
-    local ref="${BB_API_REF:-main}"
-    local url="https://raw.githubusercontent.com/restarter/bb-api/${ref}/docs/${src}"
+    local ref="${BB_BASH_REF:-main}"
+    local url="https://raw.githubusercontent.com/restarter/bb-bash/${ref}/docs/${src}"
 
     if [[ "${INSTALL_AGENT_DRY_RUN:-false}" == "true" ]]; then
         echo "  [dry-run] fetch: $url"
@@ -309,21 +309,21 @@ _install_agent_fetch() {
 }
 
 # _install_agent_md_section <dest-file>
-# Append the bb-api agent snippet to <dest-file> (CLAUDE.md or AGENTS.md).
+# Append the bbb agent snippet to <dest-file> (CLAUDE.md or AGENTS.md).
 # Modes:
 #   - dest missing       -> create with snippet
 #   - dest has marker    -> skip (use --force to re-append)
 #   - dest exists no mkr -> append with '---' separator
 _install_agent_md_section() {
     local dest="$1"
-    local ref="${BB_API_REF:-main}"
-    local url="https://raw.githubusercontent.com/restarter/bb-api/${ref}/docs/bb-api-agent-snippet.md"
-    local marker='## Bitbucket via bb-api'
+    local ref="${BB_BASH_REF:-main}"
+    local url="https://raw.githubusercontent.com/restarter/bb-bash/${ref}/docs/bb-bash-agent-snippet.md"
+    local marker='## Bitbucket via bb-bash'
 
     if [[ "${INSTALL_AGENT_DRY_RUN:-false}" == "true" ]]; then
         echo "  [dry-run] fetch: $url"
         if [[ -f "$dest" ]] && grep -qF "$marker" "$dest"; then
-            echo "  [dry-run]   skip: $dest already contains bb-api section"
+            echo "  [dry-run]   skip: $dest already contains bbb section"
         elif [[ -f "$dest" ]]; then
             echo "  [dry-run] append to: $dest"
         else
@@ -333,7 +333,7 @@ _install_agent_md_section() {
     fi
 
     if [[ -f "$dest" ]] && grep -qF "$marker" "$dest" && [[ "${INSTALL_AGENT_FORCE:-false}" != "true" ]]; then
-        echo "  skip: $dest already has bb-api section (use --force to re-append)"
+        echo "  skip: $dest already has bbb section (use --force to re-append)"
         return 0
     fi
 
@@ -351,7 +351,7 @@ _install_agent_md_section() {
         # separator but no snippet — rename either fully succeeds or leaves
         # the original intact.
         local merged
-        merged=$(mktemp -- "${dest}.bb-api-XXXXXX")
+        merged=$(mktemp -- "${dest}.bb-bash-XXXXXX")
         cat -- "$dest" > "$merged"
         printf '\n\n---\n\n' >> "$merged"
         cat -- "$tmp" >> "$merged"
@@ -375,16 +375,16 @@ _agent_status_line() {
 }
 
 # _agent_status_line_marked <path> <marker>: like _agent_status_line but
-# distinguishes "file exists with bb-api section" from "file exists but no
+# distinguishes "file exists with bbb section" from "file exists but no
 # section yet". Used for CLAUDE.md / AGENTS.md which may pre-exist for
 # other reasons.
 _agent_status_line_marked() {
     local p="$1" marker="$2"
     if [[ -f "$p" ]]; then
         if grep -qF "$marker" "$p"; then
-            echo "  [present] $p (has bb-api section)"
+            echo "  [present] $p (has bbb section)"
         else
-            echo "  [no-section] $p (exists, no bb-api section)"
+            echo "  [no-section] $p (exists, no bbb section)"
         fi
     else
         echo "  [missing] $p"
@@ -488,7 +488,7 @@ cmd_pr_create() {
 # Reviewers passed as Bitbucket usernames; the API has been deprecating
 # username as a stable identifier — tracked in bb-api-oja for UUID migration.
 cmd_pr_update() {
-    require_args 1 $# "Usage: bb-api pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2]"
+    require_args 1 $# "Usage: bbb pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2]"
     local pr_id="$1"
     require_numeric "PR id" "$pr_id"
     shift
@@ -545,7 +545,7 @@ Link:        \(.links.html.href // "n/a")"'
 
 # pr open <id> — open PR in default browser (macOS 'open', Linux 'xdg-open')
 cmd_pr_open() {
-    require_args 1 $# "Usage: bb-api pr open <id>"
+    require_args 1 $# "Usage: bbb pr open <id>"
     local pr_id="$1"
     require_numeric "PR id" "$pr_id"
     local url
@@ -576,7 +576,7 @@ cmd_pr_diff() {
 
 # pr checks <id> — show PR statuses + Bitbucket Pipelines for source branch
 cmd_pr_checks() {
-    require_args 1 $# "Usage: bb-api pr checks <id>"
+    require_args 1 $# "Usage: bbb pr checks <id>"
     local pr_id="$1"
     require_numeric "PR id" "$pr_id"
 
@@ -664,7 +664,7 @@ cmd_pr_inline() {
         side="from"
         shift
     fi
-    require_args 4 $# "Usage: bb-api pr inline [--old] <id> <path> <line> <text>"
+    require_args 4 $# "Usage: bbb pr inline [--old] <id> <path> <line> <text>"
     local pr_id="$1"
     require_numeric "PR id" "$pr_id"
     local path="$2"
@@ -683,12 +683,12 @@ cmd_pr_inline() {
 }
 
 cmd_pr_approve() {
-    require_args 1 $# "Usage: bb-api pr approve <id> [id ...]"
+    require_args 1 $# "Usage: bbb pr approve <id> [id ...]"
     batch_action "approved by" "/pullrequests/{id}/approve" '.user.display_name // "ok"' "$@"
 }
 
 cmd_pr_decline() {
-    require_args 1 $# "Usage: bb-api pr decline <id> [id ...]"
+    require_args 1 $# "Usage: bbb pr decline <id> [id ...]"
     batch_action "declined" "/pullrequests/{id}/decline" '.state // "DECLINED"' "$@"
 }
 
@@ -697,7 +697,7 @@ cmd_pr_decline() {
 # Explicit override via flags. No repo-default fetch (the API field
 # `.mainbranch.merge_commit_default` does not exist).
 cmd_pr_merge() {
-    require_args 1 $# "Usage: bb-api pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=<text>]"
+    require_args 1 $# "Usage: bbb pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=<text>]"
     local pr_id="$1"
     require_numeric "PR id" "$pr_id"
     shift
@@ -789,7 +789,7 @@ cmd_raw_post() {
 # run without auth or a Bitbucket-repo CWD — the top-level guard at the
 # bottom of this file short-circuits credential resolution for it.
 cmd_install_agent() {
-    local want_rule=false want_skill=false want_claudemd=false want_agents=false
+    local want_rule=false want_skill=false want_claude=false want_agents=false
     local has_flag=false
     INSTALL_AGENT_DRY_RUN=false
     INSTALL_AGENT_FORCE=false
@@ -798,21 +798,21 @@ cmd_install_agent() {
         case "$1" in
             --rule)     want_rule=true; has_flag=true ;;
             --skill)    want_skill=true; has_flag=true ;;
-            --claudemd) want_claudemd=true; has_flag=true ;;
+            --claude) want_claude=true; has_flag=true ;;
             --agents)   want_agents=true; has_flag=true ;;
             --dry-run)  INSTALL_AGENT_DRY_RUN=true ;;
             --force)    INSTALL_AGENT_FORCE=true ;;
             -h|--help)
                 cat <<'EOF'
-Usage: bb-api install-agent [--rule] [--skill] [--claudemd] [--agents] [--dry-run] [--force]
+Usage: bbb install-agent [--rule] [--skill] [--claude] [--agents] [--dry-run] [--force]
 
 Drop AI-agent integration artifacts into the current directory.
 
 Artifacts (combine any subset):
-  --rule       .claude/rules/bb-api-rule.md       (Claude Code, auto-load)
-  --skill      .claude/skills/bb-api/SKILL.md     (Claude Code, lazy-load)
-  --claudemd   ./CLAUDE.md                         (append "## Bitbucket via bb-api" section)
-  --agents     ./AGENTS.md                         (append "## Bitbucket via bb-api" section)
+  --rule       .claude/rules/bb-bash-rule.md       (Claude Code, auto-load)
+  --skill      .claude/skills/bb-bash/SKILL.md     (Claude Code, lazy-load)
+  --claude   ./CLAUDE.md                         (append "## Bitbucket via bb-bash" section)
+  --agents     ./AGENTS.md                         (append "## Bitbucket via bb-bash" section)
 
 Modifiers:
   --dry-run    Print actions, do not write to disk
@@ -821,32 +821,32 @@ Modifiers:
 Without flags: interactive prompt (enter letter codes like 'rsca').
 
 Env:
-  BB_API_REF   Git ref to fetch artifacts from (default: main).
-               Pin to a release tag for reproducibility, e.g. BB_API_REF=v0.1.2.
+  BB_BASH_REF   Git ref to fetch artifacts from (default: main).
+               Pin to a release tag for reproducibility, e.g. BB_BASH_REF=v0.1.2.
 
 Examples:
-  bb-api install-agent --rule --skill
-  bb-api install-agent --claudemd --dry-run
-  BB_API_REF=v0.1.2 bb-api install-agent --rule --skill --agents
+  bbb install-agent --rule --skill
+  bbb install-agent --claude --dry-run
+  BB_BASH_REF=v0.1.2 bbb install-agent --rule --skill --agents
 EOF
                 return 0
                 ;;
-            *) die "Unknown flag: $1 (run 'bb-api install-agent --help')" ;;
+            *) die "Unknown flag: $1 (run 'bbb install-agent --help')" ;;
         esac
         shift
     done
 
     if [[ "$has_flag" != "true" ]]; then
         # Under set -e, read -r -p crashes with no message on EOF/closed-stdin
-        # (CI, `bb-api install-agent < /dev/null`, piped non-tty contexts).
+        # (CI, `bbb install-agent < /dev/null`, piped non-tty contexts).
         # Short-circuit with a clear instruction instead.
-        [[ -t 0 ]] || die "no flags provided and stdin is not a tty; specify --rule/--skill/--claudemd/--agents"
+        [[ -t 0 ]] || die "no flags provided and stdin is not a tty; specify --rule/--skill/--claude/--agents"
         echo "Project: $PWD"
         echo "Status:"
-        _agent_status_line ".claude/rules/bb-api-rule.md"
-        _agent_status_line ".claude/skills/bb-api/SKILL.md"
-        _agent_status_line_marked "CLAUDE.md" '## Bitbucket via bb-api'
-        _agent_status_line_marked "AGENTS.md" '## Bitbucket via bb-api'
+        _agent_status_line ".claude/rules/bb-bash-rule.md"
+        _agent_status_line ".claude/skills/bb-bash/SKILL.md"
+        _agent_status_line_marked "CLAUDE.md" '## Bitbucket via bb-bash'
+        _agent_status_line_marked "AGENTS.md" '## Bitbucket via bb-bash'
         echo ""
         echo "Install: [r=rule, s=skill, c=CLAUDE.md, a=AGENTS.md, q=quit]"
         local choice
@@ -860,7 +860,7 @@ EOF
         [[ "$choice" =~ ^[rsca]+$ ]] || die "invalid letters in '$choice' (allowed: r/s/c/a, or q to quit)"
         [[ "$choice" == *r* ]] && want_rule=true
         [[ "$choice" == *s* ]] && want_skill=true
-        [[ "$choice" == *c* ]] && want_claudemd=true
+        [[ "$choice" == *c* ]] && want_claude=true
         [[ "$choice" == *a* ]] && want_agents=true
     fi
 
@@ -870,11 +870,11 @@ EOF
     else
         mode_label="live"
     fi
-    echo "Installing into $PWD ($mode_label, ref=${BB_API_REF:-main})"
+    echo "Installing into $PWD ($mode_label, ref=${BB_BASH_REF:-main})"
 
-    $want_rule     && _install_agent_fetch "bb-api-rule.md"        ".claude/rules/bb-api-rule.md"
-    $want_skill    && _install_agent_fetch "bb-api-skill/SKILL.md" ".claude/skills/bb-api/SKILL.md"
-    $want_claudemd && _install_agent_md_section "CLAUDE.md"
+    $want_rule     && _install_agent_fetch "bb-bash-rule.md"        ".claude/rules/bb-bash-rule.md"
+    $want_skill    && _install_agent_fetch "bb-bash-skill/SKILL.md" ".claude/skills/bb-bash/SKILL.md"
+    $want_claude && _install_agent_md_section "CLAUDE.md"
     $want_agents   && _install_agent_md_section "AGENTS.md"
 
     echo "Done."
@@ -884,40 +884,40 @@ EOF
 usage() {
     # WORKSPACE/REPO may be unset when usage() runs through the short-circuit
     # path (help / install-agent / -h / --help), which skips resolve_workspace_repo.
-    # Use safe defaults so `bb-api help` works outside a bitbucket.org repo.
-    echo "bb-api - Bitbucket API wrapper for ${WORKSPACE:-<workspace>}/${REPO:-<repo>}"
+    # Use safe defaults so `bbb help` works outside a bitbucket.org repo.
+    echo "bb-bash - Bitbucket API wrapper for ${WORKSPACE:-<workspace>}/${REPO:-<repo>}"
     echo ""
     echo "Usage:"
-    echo "  bb-api pr list [--state=open|merged|declined|superseded|all] [--author=<user>]   List PRs"
-    echo "  bb-api pr create <target> <title> [desc]        Create PR from current branch"
-    echo "  bb-api pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2]  Update PR metadata"
-    echo "  bb-api pr show <id>                             PR details + changed files"
-    echo "  bb-api pr open <id>                             Open PR in default browser"
-    echo "  bb-api pr diff <id>                             Full diff"
-    echo "  bb-api pr checks <id>                           Show CI statuses + Bitbucket Pipelines"
-    echo "  bb-api pr comments <id>                         List comments"
-    echo "  bb-api pr comment <id> <text>                   Add general comment"
-    echo "  bb-api pr inline [--old] <id> <path> <line> <text>  Inline comment (default new code, --old for deleted)"
-    echo "  bb-api pr approve <id> [id ...]                 Approve PR, batch-capable"
-    echo "  bb-api pr decline <id> [id ...]                 Decline (close without merge), batch-capable"
-    echo "  bb-api pr merge <id> [--squash|--commit|--ff] [--delete-branch]  Merge PR (default: merge_commit)"
-    echo "  bb-api pr reply <pr_id> <comment_id> <text>   Reply to a comment"
-    echo "  bb-api pr edit-comment <pr_id> <comment_id> <text>  Edit a comment"
-    echo "  bb-api pr delete-comment <pr_id> <comment_id>   Delete a comment"
-    echo "  bb-api raw <endpoint>                           Raw GET  (e.g. /pullrequests)"
-    echo "  bb-api raw-post <endpoint> <json>               Raw POST"
-    echo "  bb-api install-agent [--rule] [--skill] [--claudemd] [--agents] [--dry-run] [--force]"
+    echo "  bbb pr list [--state=open|merged|declined|superseded|all] [--author=<user>]   List PRs"
+    echo "  bbb pr create <target> <title> [desc]        Create PR from current branch"
+    echo "  bbb pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2]  Update PR metadata"
+    echo "  bbb pr show <id>                             PR details + changed files"
+    echo "  bbb pr open <id>                             Open PR in default browser"
+    echo "  bbb pr diff <id>                             Full diff"
+    echo "  bbb pr checks <id>                           Show CI statuses + Bitbucket Pipelines"
+    echo "  bbb pr comments <id>                         List comments"
+    echo "  bbb pr comment <id> <text>                   Add general comment"
+    echo "  bbb pr inline [--old] <id> <path> <line> <text>  Inline comment (default new code, --old for deleted)"
+    echo "  bbb pr approve <id> [id ...]                 Approve PR, batch-capable"
+    echo "  bbb pr decline <id> [id ...]                 Decline (close without merge), batch-capable"
+    echo "  bbb pr merge <id> [--squash|--commit|--ff] [--delete-branch]  Merge PR (default: merge_commit)"
+    echo "  bbb pr reply <pr_id> <comment_id> <text>   Reply to a comment"
+    echo "  bbb pr edit-comment <pr_id> <comment_id> <text>  Edit a comment"
+    echo "  bbb pr delete-comment <pr_id> <comment_id>   Delete a comment"
+    echo "  bbb raw <endpoint>                           Raw GET  (e.g. /pullrequests)"
+    echo "  bbb raw-post <endpoint> <json>               Raw POST"
+    echo "  bbb install-agent [--rule] [--skill] [--claude] [--agents] [--dry-run] [--force]"
     echo "                                                  Drop AI-agent integration artifacts into \$PWD"
     echo ""
     echo "Inline comments: omit --old for new/added lines, include --old for deleted lines."
     echo ""
     echo "Configuration (via .env file or environment variables):"
-    echo "  BB_API_EMAIL      Bitbucket account email   (required)"
-    echo "  BB_API_TOKEN      Bitbucket API token       (required)"
-    echo "  BB_API_WORKSPACE  Bitbucket workspace       (optional, auto-detected from git remote)"
-    echo "  BB_API_REPO       Repository slug           (optional, auto-detected from git remote)"
-    echo "  BB_API_REMOTE     Git remote name override  (optional, default: scan for bitbucket.org)"
-    echo "  BB_API_REF        Git ref for install-agent (optional, default: main)"
+    echo "  BB_BASH_EMAIL      Bitbucket account email   (required)"
+    echo "  BB_BASH_TOKEN      Bitbucket API token       (required)"
+    echo "  BB_BASH_WORKSPACE  Bitbucket workspace       (optional, auto-detected from git remote)"
+    echo "  BB_BASH_REPO       Repository slug           (optional, auto-detected from git remote)"
+    echo "  BB_BASH_REMOTE     Git remote name override  (optional, default: scan for bitbucket.org)"
+    echo "  BB_BASH_REF        Git ref for install-agent (optional, default: main)"
     echo ""
     echo "Copy .env.example to .env and fill in your values."
 }
@@ -942,26 +942,26 @@ main() {
             shift
             case "$subcmd" in
                 list)           cmd_pr_list "$@" ;;
-                create)         require_args 2 $# "Usage: bb-api pr create <target> <title> [description]"; cmd_pr_create "$@" ;;
+                create)         require_args 2 $# "Usage: bbb pr create <target> <title> [description]"; cmd_pr_create "$@" ;;
                 update)         cmd_pr_update "$@" ;;
-                show)           require_args 1 $# "Usage: bb-api pr show <id>"; cmd_pr_show "$1" ;;
+                show)           require_args 1 $# "Usage: bbb pr show <id>"; cmd_pr_show "$1" ;;
                 open)           cmd_pr_open "$@" ;;
-                diff)           require_args 1 $# "Usage: bb-api pr diff <id>"; cmd_pr_diff "$1" ;;
+                diff)           require_args 1 $# "Usage: bbb pr diff <id>"; cmd_pr_diff "$1" ;;
                 checks)         cmd_pr_checks "$@" ;;
-                comments)       require_args 1 $# "Usage: bb-api pr comments <id>"; cmd_pr_comments "$1" ;;
-                comment)        require_args 2 $# "Usage: bb-api pr comment <id> <text>"; cmd_pr_comment "$@" ;;
+                comments)       require_args 1 $# "Usage: bbb pr comments <id>"; cmd_pr_comments "$1" ;;
+                comment)        require_args 2 $# "Usage: bbb pr comment <id> <text>"; cmd_pr_comment "$@" ;;
                 inline)         cmd_pr_inline "$@" ;;
                 approve)        cmd_pr_approve "$@" ;;
                 decline)        cmd_pr_decline "$@" ;;
                 merge)          cmd_pr_merge "$@" ;;
-                reply)          require_args 3 $# "Usage: bb-api pr reply <pr_id> <comment_id> <text>"; cmd_pr_reply "$@" ;;
-                edit-comment)   require_args 3 $# "Usage: bb-api pr edit-comment <pr_id> <comment_id> <text>"; cmd_pr_edit_comment "$@" ;;
-                delete-comment) require_args 2 $# "Usage: bb-api pr delete-comment <pr_id> <comment_id>"; cmd_pr_delete_comment "$1" "$2" ;;
+                reply)          require_args 3 $# "Usage: bbb pr reply <pr_id> <comment_id> <text>"; cmd_pr_reply "$@" ;;
+                edit-comment)   require_args 3 $# "Usage: bbb pr edit-comment <pr_id> <comment_id> <text>"; cmd_pr_edit_comment "$@" ;;
+                delete-comment) require_args 2 $# "Usage: bbb pr delete-comment <pr_id> <comment_id>"; cmd_pr_delete_comment "$1" "$2" ;;
                 *)              usage; exit 1 ;;
             esac
             ;;
-        raw)           require_args 1 $# "Usage: bb-api raw <endpoint>"; cmd_raw "$1" ;;
-        raw-post)      require_args 2 $# "Usage: bb-api raw-post <endpoint> <json>"; cmd_raw_post "$1" "$2" ;;
+        raw)           require_args 1 $# "Usage: bbb raw <endpoint>"; cmd_raw "$1" ;;
+        raw-post)      require_args 2 $# "Usage: bbb raw-post <endpoint> <json>"; cmd_raw_post "$1" "$2" ;;
         install-agent) cmd_install_agent "$@" ;;
         help)          usage ;;
         *)             usage; exit 1 ;;
@@ -970,12 +970,12 @@ main() {
 
 # --- Top-level execution ---
 # Run only when executed directly (not when sourced for testing).
-# Test harnesses source bb-api to access function definitions, then set
+# Test harnesses source bbb to access function definitions, then set
 # WORKSPACE/REPO/BASE_URL/AUTH manually — see test/test_helper.bash.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     # Load .env from the script's REAL directory (resolved through any number
     # of symlink hops by resolve_script_dir in Helpers). Kept inside the guard
-    # so test harnesses that source bb-api don't inherit developer credentials.
+    # so test harnesses that source bbb don't inherit developer credentials.
     SCRIPT_DIR=$(resolve_script_dir)
     # shellcheck source=/dev/null
     [[ -f "${SCRIPT_DIR}/.env" ]] && source "${SCRIPT_DIR}/.env"
@@ -987,11 +987,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             main "$@"
             ;;
         *)
-            BB_API_EMAIL="${BB_API_EMAIL:?BB_API_EMAIL is required (set in .env or environment)}"
-            BB_API_TOKEN="${BB_API_TOKEN:?BB_API_TOKEN is required (set in .env or environment)}"
+            BB_BASH_EMAIL="${BB_BASH_EMAIL:?BB_BASH_EMAIL is required (set in .env or environment)}"
+            BB_BASH_TOKEN="${BB_BASH_TOKEN:?BB_BASH_TOKEN is required (set in .env or environment)}"
             resolve_workspace_repo
             BASE_URL="https://api.bitbucket.org/2.0/repositories/${WORKSPACE}/${REPO}"
-            AUTH="${BB_API_EMAIL}:${BB_API_TOKEN}"
+            AUTH="${BB_BASH_EMAIL}:${BB_BASH_TOKEN}"
             main "$@"
             ;;
     esac

@@ -1,14 +1,14 @@
 # Commands Reference
 
-Full reference for every `bb-api` command. For setup, see [../README.md](../README.md).
+Full reference for every `bbb` command. For setup, see [../README.md](../README.md).
 
-All commands die with non-zero exit on API error (unless noted). Output is plain text — pipe through `jq` if you need structured data (most commands wrap `jq` already; for raw JSON use `bb-api raw`).
+All commands die with non-zero exit on API error (unless noted). Output is plain text — pipe through `jq` if you need structured data (most commands wrap `jq` already; for raw JSON use `bbb raw`).
 
 ---
 
 ## pr list
 
-**Synopsis:** `bb-api pr list [--state=open|merged|declined|superseded|all] [--author=<user>]`
+**Synopsis:** `bbb pr list [--state=open|merged|declined|superseded|all] [--author=<user>]`
 
 **Description:** List PRs in the resolved repo. Defaults to open PRs.
 
@@ -19,13 +19,13 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 - `--author=<user>` — Bitbucket username
 - `--reviewer=<user>` — **not yet supported** (BBQL limitation, see Known Limitations in CHANGELOG)
 
-**Example:** `bb-api pr list --state=merged --author=alice`
+**Example:** `bbb pr list --state=merged --author=alice`
 
 ---
 
 ## pr create
 
-**Synopsis:** `bb-api pr create <target_branch> "title" [description]`
+**Synopsis:** `bbb pr create <target_branch> "title" [description]`
 
 **Description:** Create a PR from the current git branch to `<target_branch>`.
 
@@ -37,7 +37,7 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 ## pr show
 
-**Synopsis:** `bb-api pr show <id>`
+**Synopsis:** `bbb pr show <id>`
 
 **Description:** PR details (title, author, branch, dates, description) + changed files diffstat.
 
@@ -47,7 +47,7 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 ## pr diff
 
-**Synopsis:** `bb-api pr diff <id>`
+**Synopsis:** `bbb pr diff <id>`
 
 **Description:** Full unified diff. Output is plain text — pipe to `less` or `delta`.
 
@@ -57,7 +57,7 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 ## pr checks
 
-**Synopsis:** `bb-api pr checks <id>`
+**Synopsis:** `bbb pr checks <id>`
 
 **Description:** Show PR-level statuses (external CI integrations) + Bitbucket Pipelines for the source branch. State vocabularies are normalized: `pass` / `running` / `fail` / `stopped`.
 
@@ -67,7 +67,7 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 ## pr open
 
-**Synopsis:** `bb-api pr open <id>`
+**Synopsis:** `bbb pr open <id>`
 
 **Description:** Open the PR in your default browser. macOS uses `open`, Linux uses `xdg-open`, other platforms print the URL.
 
@@ -77,7 +77,7 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 ## pr comments
 
-**Synopsis:** `bb-api pr comments <id>`
+**Synopsis:** `bbb pr comments <id>`
 
 **Description:** List all comments (general + inline + replies). Excludes deleted comments.
 
@@ -87,7 +87,7 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 ## pr comment
 
-**Synopsis:** `bb-api pr comment <id> <text>`
+**Synopsis:** `bbb pr comment <id> <text>`
 
 **Description:** Add a general (non-inline) comment to the PR.
 
@@ -97,19 +97,19 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 ## pr inline
 
-**Synopsis:** `bb-api pr inline [--old] <id> <path> <line> <text>`
+**Synopsis:** `bbb pr inline [--old] <id> <path> <line> <text>`
 
 **Description:** Add an inline comment on a specific file:line. Omit `--old` for new/added code (default); include `--old` to comment on deleted/old-version code.
 
 **Required scopes:** `write:pullrequest:bitbucket`
 
-**Example:** `bb-api pr inline --old 42 src/auth.ts 10 "why was this removed?"`
+**Example:** `bbb pr inline --old 42 src/auth.ts 10 "why was this removed?"`
 
 ---
 
 ## pr reply
 
-**Synopsis:** `bb-api pr reply <pr_id> <comment_id> <text>`
+**Synopsis:** `bbb pr reply <pr_id> <comment_id> <text>`
 
 **Description:** Reply to a comment in-thread.
 
@@ -119,7 +119,7 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 ## pr edit-comment
 
-**Synopsis:** `bb-api pr edit-comment <pr_id> <comment_id> <text>`
+**Synopsis:** `bbb pr edit-comment <pr_id> <comment_id> <text>`
 
 **Description:** Edit (replace) the body of an existing comment.
 
@@ -129,7 +129,7 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 ## pr delete-comment
 
-**Synopsis:** `bb-api pr delete-comment <pr_id> <comment_id>`
+**Synopsis:** `bbb pr delete-comment <pr_id> <comment_id>`
 
 **Description:** Delete a comment. Use for cleaning up mistakes.
 
@@ -139,19 +139,19 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 ## pr approve
 
-**Synopsis:** `bb-api pr approve <id> [id ...]`
+**Synopsis:** `bbb pr approve <id> [id ...]`
 
 **Description:** Approve one or more PRs. In batch mode (>1 ID), continues on per-item failure with a status line per PR.
 
 **Required scopes:** `write:pullrequest:bitbucket`
 
-**Example:** `bb-api pr approve 42 43 44`
+**Example:** `bbb pr approve 42 43 44`
 
 ---
 
 ## pr decline
 
-**Synopsis:** `bb-api pr decline <id> [id ...]`
+**Synopsis:** `bbb pr decline <id> [id ...]`
 
 **Description:** Decline (close without merging) one or more PRs. Batch-capable like `approve`.
 
@@ -161,7 +161,7 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 ## pr merge
 
-**Synopsis:** `bb-api pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=<text>]`
+**Synopsis:** `bbb pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=<text>]`
 
 **Description:** Merge a PR. Default strategy: `merge_commit`.
 
@@ -178,77 +178,77 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 ## pr update
 
-**Synopsis:** `bb-api pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2]`
+**Synopsis:** `bbb pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2]`
 
 **Description:** Update PR metadata via PUT.
 
 **Required scopes:** `write:pullrequest:bitbucket`
 
-**Important:** `--reviewers` performs **full replacement** (not append) — Bitbucket API has no PATCH semantics for the reviewers array. Existing reviewers not in the new list are removed. Reviewers passed as Bitbucket usernames (UUID migration tracked in bb-api-oja).
+**Important:** `--reviewers` performs **full replacement** (not append) — Bitbucket API has no PATCH semantics for the reviewers array. Existing reviewers not in the new list are removed. Reviewers passed as Bitbucket usernames (UUID migration tracked in bb-bash-oja).
 
 ---
 
 ## raw / raw-post
 
 **Synopsis:**
-- `bb-api raw <endpoint>` — GET request
-- `bb-api raw-post <endpoint> <json>` — POST request
+- `bbb raw <endpoint>` — GET request
+- `bbb raw-post <endpoint> <json>` — POST request
 
 **Description:** Direct API access for endpoints not wrapped. Endpoint is relative to `/repositories/{ws}/{repo}`. Output is raw JSON (pretty-printed via `jq`).
 
-**Example:** `bb-api raw "/branch-restrictions"`
+**Example:** `bbb raw "/branch-restrictions"`
 
 ---
 
 ## install-agent
 
 **Synopsis:**
-- `bb-api install-agent [--rule] [--skill] [--claudemd] [--agents] [--dry-run] [--force]`
+- `bbb install-agent [--rule] [--skill] [--claude] [--agents] [--dry-run] [--force]`
 
-**Description:** Drop AI-agent integration artifacts into the current directory. Combine any subset of `--rule`, `--skill`, `--claudemd`, `--agents`. Without flags, prompts interactively for letter codes (`rsca`). Unlike `pr` and `raw`, this command does NOT require `.env` credentials or a Bitbucket-repo CWD — it runs from any directory.
+**Description:** Drop AI-agent integration artifacts into the current directory. Combine any subset of `--rule`, `--skill`, `--claude`, `--agents`. Without flags, prompts interactively for letter codes (`rsca`). Unlike `pr` and `raw`, this command does NOT require `.env` credentials or a Bitbucket-repo CWD — it runs from any directory.
 
 **Flags:**
 
 | Flag | Destination | Behavior |
 |------|-------------|----------|
-| `--rule` | `./.claude/rules/bb-api-rule.md` | Claude Code-only, auto-loaded into every context |
-| `--skill` | `./.claude/skills/bb-api/SKILL.md` | Claude Code-only, lazy-loaded when invoked |
-| `--claudemd` | `./CLAUDE.md` | Append `## Bitbucket via bb-api` section (create file if missing) |
+| `--rule` | `./.claude/rules/bb-bash-rule.md` | Claude Code-only, auto-loaded into every context |
+| `--skill` | `./.claude/skills/bb-bash/SKILL.md` | Claude Code-only, lazy-loaded when invoked |
+| `--claude` | `./CLAUDE.md` | Append `## Bitbucket via bb-bash` section (create file if missing) |
 | `--agents` | `./AGENTS.md` | Same section, written to `AGENTS.md` (cross-tool standard) |
 | `--dry-run` | — | Print actions, write nothing to disk |
 | `--force` | — | Overwrite existing files / re-append section even if marker is present |
 
-**Idempotency:** by default skips any artifact that already exists. For `CLAUDE.md` / `AGENTS.md` the check is marker-based (`## Bitbucket via bb-api`) — file may exist for other reasons without skipping. Re-running is safe.
+**Idempotency:** by default skips any artifact that already exists. For `CLAUDE.md` / `AGENTS.md` the check is marker-based (`## Bitbucket via bb-bash`) — file may exist for other reasons without skipping. Re-running is safe.
 
-**Source:** artifacts are fetched from `https://raw.githubusercontent.com/restarter/bb-api/${BB_API_REF:-main}/docs/`. Pin to a release tag for reproducibility:
+**Source:** artifacts are fetched from `https://raw.githubusercontent.com/restarter/bb-bash/${BB_BASH_REF:-main}/docs/`. Pin to a release tag for reproducibility:
 
 ```bash
-BB_API_REF=v0.1.2 bb-api install-agent --rule --skill --claudemd --agents
+BB_BASH_REF=v0.1.2 bbb install-agent --rule --skill --claude --agents
 ```
 
 **Examples:**
 
 ```bash
-bb-api install-agent                                        # interactive
-bb-api install-agent --rule --skill                         # Claude Code-native pair
-bb-api install-agent --rule --skill --claudemd --agents     # everything
-bb-api install-agent --claudemd --dry-run                   # preview without writing
-bb-api install-agent --rule --force                         # overwrite existing rule
+bbb install-agent                                        # interactive
+bbb install-agent --rule --skill                         # Claude Code-native pair
+bbb install-agent --rule --skill --claude --agents     # everything
+bbb install-agent --claude --dry-run                   # preview without writing
+bbb install-agent --rule --force                         # overwrite existing rule
 ```
 
-**Interactive mode:** prints status of each artifact (present/missing/no-section), then reads letter codes. `rsca` = all four; `rs` = rule+skill; `q` (or empty input) = quit. Invalid characters in the input are rejected; whitelist is `r`/`s`/`c`/`a`. Refuses to run interactively when stdin is not a TTY (`bb-api install-agent < /dev/null` or CI contexts) — pass explicit flags instead.
+**Interactive mode:** prints status of each artifact (present/missing/no-section), then reads letter codes. `rsca` = all four; `rs` = rule+skill; `q` (or empty input) = quit. Invalid characters in the input are rejected; whitelist is `r`/`s`/`c`/`a`. Refuses to run interactively when stdin is not a TTY (`bbb install-agent < /dev/null` or CI contexts) — pass explicit flags instead.
 
 ---
 
 ## Environment overrides
 
-- `BB_API_REMOTE=<name>` — force a specific git remote for workspace/repo resolution
-- `BB_API_WORKSPACE=<ws>` + `BB_API_REPO=<repo>` — bypass git remote auto-detect entirely
-- `BB_API_BATCH_DELAY=<seconds>` — delay between batch API calls (default `0.3`; set `0` in tests)
-- `BB_API_EMAIL` / `BB_API_TOKEN` — credentials (loaded from `.env` next to script by default)
-- `BB_API_USER_ONLY=1` — installer-only; force `~/.local/bin` (see [`../scripts/install.sh`](../scripts/install.sh))
-- `BB_API_FORCE=1` — installer-only; override non-symlink overwrite refusal (see [`../scripts/install.sh`](../scripts/install.sh))
-- `BB_API_REF=<git-ref>` — `install-agent` only; ref to fetch agent artifacts from (default `main`)
+- `BB_BASH_REMOTE=<name>` — force a specific git remote for workspace/repo resolution
+- `BB_BASH_WORKSPACE=<ws>` + `BB_BASH_REPO=<repo>` — bypass git remote auto-detect entirely
+- `BB_BASH_BATCH_DELAY=<seconds>` — delay between batch API calls (default `0.3`; set `0` in tests)
+- `BB_BASH_EMAIL` / `BB_BASH_TOKEN` — credentials (loaded from `.env` next to script by default)
+- `BB_BASH_USER_ONLY=1` — installer-only; force `~/.local/bin` (see [`../scripts/install.sh`](../scripts/install.sh))
+- `BB_BASH_FORCE=1` — installer-only; override non-symlink overwrite refusal (see [`../scripts/install.sh`](../scripts/install.sh))
+- `BB_BASH_REF=<git-ref>` — `install-agent` only; ref to fetch agent artifacts from (default `main`)
 
 See [design.md](design.md) for the full env precedence and auto-detect chain.
 
