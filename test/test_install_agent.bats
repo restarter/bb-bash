@@ -170,6 +170,36 @@ combined content"
     grep -q "combined content" "$TEST_TMP/AGENTS.md"
 }
 
+# --- URL→file mapping regression (bb-bash-6ru) ---
+#
+# Guard against renaming an artifact locally without updating the fetch URL
+# in bbb (or vice versa). Runs install-agent --dry-run, parses every emitted
+# fetch URL, strips the github-raw prefix, and asserts the resulting relative
+# path is a real file in the repo. Self-maintaining: if a new artifact is
+# added to install-agent, this test picks it up automatically. Does NOT touch
+# GitHub — purely a local-tree consistency check.
+
+@test "install-agent: every fetch URL maps to an existing file in the repo" {
+    local repo_root
+    repo_root="$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)"
+    cd "$TEST_TMP"
+
+    run "$repo_root/bbb" install-agent --rule --skill --claude --agents --dry-run
+    [ "$status" -eq 0 ]
+
+    local url rel missing=0
+    while IFS= read -r url; do
+        [ -z "$url" ] && continue
+        rel="${url#https://raw.githubusercontent.com/restarter/bb-bash/main/}"
+        if [ ! -f "$repo_root/$rel" ]; then
+            echo "MISSING in repo: $rel  (url: $url)" >&2
+            missing=$((missing + 1))
+        fi
+    done < <(printf '%s\n' "$output" | grep -oE 'https://raw\.githubusercontent\.com/[^[:space:]]+' | sort -u)
+
+    [ "$missing" -eq 0 ]
+}
+
 # --- top-level guard regression (auth/repo resolution refactor) ---
 #
 # Task 3.3 split the top-level guard into two branches: short-circuit (no auth,
