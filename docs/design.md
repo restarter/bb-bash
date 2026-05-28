@@ -2,14 +2,14 @@
 
 ## Single-file bash script
 
-bb-api is one executable script. Dependencies: `curl`, `jq`. No build step, no package manager.
+bb-bash is one executable script (`bbb` on disk). Dependencies: `curl`, `jq`. No build step, no package manager.
 
 ## Sections
 
 The script is divided into clearly-labeled sections (line numbers shift over time — refer by label):
 
 1. **Usage docstring** — header comment doubles as inline help
-2. **Helpers** — `die`, `resolve_script_dir`, `require_args`, `resolve_workspace_repo`, `batch_action`. `resolve_script_dir` is defined here (not in the top-level guard) so tests can source bb-api and exercise it directly; it anchors `.env` discovery to the real script directory by following symlinks portably (no `readlink -f`).
+2. **Helpers** — `die`, `resolve_script_dir`, `require_args`, `resolve_workspace_repo`, `batch_action`. `resolve_script_dir` is defined here (not in the top-level guard) so tests can source bbb and exercise it directly; it anchors `.env` discovery to the real script directory by following symlinks portably (no `readlink -f`).
 3. **API helpers** — `api_get`, `api_post` (both with `--soft`), `api_put`, `api_delete`
 4. **Commands** — `cmd_pr_*`, `cmd_raw*` functions
 5. **`usage()`** — printed help text
@@ -20,10 +20,10 @@ The script is divided into clearly-labeled sections (line numbers shift over tim
 
 When `resolve_workspace_repo` runs at script start, it resolves `WORKSPACE` and `REPO` in this order:
 
-1. **`BB_API_REMOTE=<name>` env var** — use this exact remote's URL
+1. **`BB_BASH_REMOTE=<name>` env var** — use this exact remote's URL
 2. **`origin` remote** if its URL matches `(^|@|/)bitbucket\.org[:/]`
 3. **First remote** whose URL matches `(^|@|/)bitbucket\.org[:/]` (covers `bb`, `bitbucket`, `upstream`, ...)
-4. **Fallback** to `BB_API_WORKSPACE` + `BB_API_REPO` env vars
+4. **Fallback** to `BB_BASH_WORKSPACE` + `BB_BASH_REPO` env vars
 5. **Error** with a multi-line help message listing the four resolution sources attempted
 
 Each step short-circuits as soon as it produces a parseable URL.
@@ -93,7 +93,7 @@ fi
 
 ## Known constraints
 
-- **Token in process listings.** `curl -u email:token` puts credentials in process args, visible via `ps` on the same user. Acceptable for personal CLI; for shared systems use `curl --config -` pattern (deferred to bb-api-oja).
+- **Token in process listings.** `curl -u email:token` puts credentials in process args, visible via `ps` on the same user. Acceptable for personal CLI; for shared systems use `curl --config -` pattern (deferred to `bb-api-oja`).
 - **`pr update --reviewers` uses usernames.** Bitbucket is deprecating username as a stable identifier. UUID/account_id migration tracked in bb-api-oja.
 - **`pr list --reviewer` not implemented.** BBQL doesn't support filtering on `reviewers.username` (only `reviewers.uuid`). Workaround: pipe `pr list --state=all` through `jq` for client-side filter.
 - **Auto-detect requires git in PATH.** When falling back to env vars (step 4), git is not invoked.
