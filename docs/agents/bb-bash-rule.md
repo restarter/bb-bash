@@ -86,6 +86,8 @@ bbb pr approve 12 15 18                  # batch approve
 - Bitbucket Server (self-hosted) — bb-bash targets Bitbucket **Cloud** only.
 - Workspace administration (users, repos, permissions) — out of scope; use the Bitbucket web UI.
 
-## Full reference
+## References
 
-`bbb` help: `bbb help`. Full command reference: https://github.com/restarter/bb-bash/blob/main/docs/commands.md.
+- Full command reference: https://github.com/restarter/bb-bash/blob/main/docs/commands.md
+- bb-bash repo: https://github.com/restarter/bb-bash
+- Bitbucket Cloud REST API: https://developer.atlassian.com/cloud/bitbucket/rest/

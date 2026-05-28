@@ -1,8 +1,10 @@
-# bb-bash
+# bb-bash (bbb)
 
-Shell wrapper for the Bitbucket Cloud REST API 2.0. Single-file bash script, no build step. The on-disk binary is `bbb`.
+> **Bitbucket Cloud CLI built for AI coding agents** — single-file bash, with `CLAUDE.md` snippet, Rule, and Skill bundled out of the box.
 
-Ships with drop-in integration artifacts (Claude Code rule, skill, `CLAUDE.md` / `AGENTS.md` snippets) so any AI coding agent you already use can drive it without extra wiring — see [For AI agents](#for-ai-agents) below.
+`bbb` (the binary) wraps the Bitbucket Cloud REST API 2.0 so you and your AI agent can drive PR review, inline comments, approve, decline, merge, and create — all from chat or terminal, without leaving your editor. No build step, no package manager: one bash script, two dependencies (`curl`, `jq`).
+
+The drop-in artifacts (`CLAUDE.md` / `AGENTS.md` snippets + Claude Code **Rule** + Claude Code **Skill**) teach the AI agents you already use (Claude Code, Cursor, Copilot Chat, Codex, Aider, …) how to call `bbb` — no manual wiring. See [For AI agents](#for-ai-agents) for what each artifact does.
 
 ## Install
 
@@ -11,31 +13,15 @@ curl --proto '=https' --tlsv1.2 -fsSL \
     https://raw.githubusercontent.com/restarter/bb-bash/main/scripts/install.sh | bash
 ```
 
-Installs the latest tagged release into `~/.local/share/bb-bash/` and symlinks it into your PATH (`/usr/local/bin/bbb` if writable, else `~/.local/bin/bbb`). On first install, `.env` is created from `.env.example` (chmod 600). **Re-run the same command to update**; your `.env` is never touched.
+Re-run the same command to update; your `.env` is never touched.
 
-Useful env vars:
-- `BB_BASH_USER_ONLY=1` — force install into `~/.local/bin` (skip `/usr/local/bin` even if writable).
-- `BB_BASH_FORCE=1` — overwrite a pre-existing non-symlink at the target PATH location.
-
-### Manual install
-
-```bash
-git clone https://github.com/restarter/bb-bash ~/.local/share/bb-bash
-ln -s ~/.local/share/bb-bash/bbb ~/.local/bin/bbb    # or /usr/local/bin
-cp ~/.local/share/bb-bash/.env.example ~/.local/share/bb-bash/.env
-chmod 600 ~/.local/share/bb-bash/.env
-# then edit .env with your credentials
-```
-
-### Dependencies
-
-`curl`, `jq` (`brew install jq` / `apt install jq`).
+Manual install, env-var overrides, and security-inspection one-liner: see [docs/installation.md](docs/installation.md).
 
 ## Setup
 
 ### 1. Create a Bitbucket API token
 
-Go to https://bitbucket.org/account/settings/api-tokens/. Required scopes:
+Go to https://id.atlassian.com/manage-profile/security/api-tokens. Required scopes:
 
 - `read:repository:bitbucket`
 - `read:pullrequest:bitbucket`
@@ -51,30 +37,34 @@ BB_BASH_EMAIL="you@example.com"
 BB_BASH_TOKEN="<api-token>"
 ```
 
-Workspace/repo are auto-detected from `git remote`. Override with `BB_BASH_WORKSPACE` + `BB_BASH_REPO` (outside a git repo) or `BB_BASH_REMOTE=<name>` to pick a specific remote.
+Workspace/repo are [auto-detected](#how-auto-detect-works) from `git remote`. Override with `BB_BASH_WORKSPACE` + `BB_BASH_REPO` (outside a git repo) or `BB_BASH_REMOTE=<name>` to pick a specific remote.
 
 ## For AI agents
 
-`bbb install-agent` drops integration artifacts so the AI agents you already use (Claude Code, Cursor, Copilot Chat, Codex, Aider, …) know how to call bb-bash without extra prompting.
+Run `bbb install-agent` inside your project to drop integration artifacts so the AI agents you already use (Claude Code, Cursor, Copilot Chat, Codex, Aider, …) know how to call `bbb` without extra prompting.
 
 ```bash
-bbb install-agent --rule --skill --claude --agents   # drop all four
-bbb install-agent --claude --dry-run                  # preview without writing
-bbb install-agent --rule --force                        # overwrite existing
+bbb install-agent --claude              # snippet → CLAUDE.md (works with any CLAUDE.md-reading agent)
+bbb install-agent --rule --skill        # Claude Code: rule (always-on hint) + skill (on-demand workflows)
+bbb install-agent --rule --global       # user-global rule (auto-loaded in every project)
+bbb install-agent --claude --dry-run    # preview without writing
+bbb install-agent --rule --force        # overwrite an existing artifact
 ```
 
-Idempotent — re-run is safe; pin a release with `BB_BASH_REF=v0.2.0 bbb install-agent ...`.
+Idempotent — re-run is safe; pin a release with `BB_BASH_REF=v0.2.0 bbb install-agent ...`. Pass `--global` (works with `--rule` / `--skill` / `--claude`) to install into `~/.claude/` for cross-project availability. `--agents` is project-only — no widely-adopted global path for `AGENTS.md`.
 
 ### What ships out of the box
 
+**Pick any one** — each artifact is fully self-contained. Your AI agent gets the same end result (install hint, auth, commands, conventions, workflows). Choose by your tool / preference; combine if you want.
+
 | Type | Lands at | Loading | Best for |
 |---|---|---|---|
-| **CLAUDE** | `CLAUDE.md` in project root | every turn | Claude / Cursor / Copilot via `CLAUDE.md` |
-| **AGENTS** | `AGENTS.md` in project root | every turn | cross-tool agents (OpenAI Codex, Aider, Continue, …) |
-| **Rule** | `.claude/rules/bb-bash-rule.md` | session start | short always-on hint, "bbb exists, here's how" |
-| **Skill** | `.claude/skills/bb-bash/SKILL.md` | on-demand | full workflows (review, respond, batch cleanup); zero context cost until invoked |
+| `CLAUDE.md` | project root | every turn | Claude / Cursor / Copilot via `CLAUDE.md` |
+| `AGENTS.md` | project root | every turn | cross-tool agents (OpenAI Codex, Aider, Continue, …) |
+| Rule | `.claude/rules/bb-bash-rule.md` | session start | short always-on hint, "bbb exists, here's how" |
+| Skill | `.claude/skills/bb-bash/SKILL.md` | on-demand | full workflows (review, respond, batch cleanup); zero context cost until invoked |
 
-Pick what fits your stack — `install-agent` accepts any combination of `--rule --skill --claude --agents`.
+Combine freely — `install-agent` accepts any subset of `--rule --skill --claude --agents`. Or browse and copy the sources by hand: [`docs/agents/`](docs/agents/) ([README](docs/agents/README.md)).
 
 ### Then ask your agent things like
 
@@ -83,9 +73,9 @@ Pick what fits your stack — `install-agent` accepts any combination of `--rule
 - "Approve PR #12 and merge with `--squash --delete-branch`."
 - "Reply to comment 753926626 on PR #42 with: 'Good catch, fixed.'"
 
-The agent already knows the commands because the install dropped a rule + skill into `.claude/`, plus a `## Bitbucket via bb-bash` section into your `CLAUDE.md` / `AGENTS.md`.
+The agent already knows the commands because the install dropped a Rule + Skill into `.claude/`, plus a `## Bitbucket via bb-bash` section into your `CLAUDE.md` / `AGENTS.md`.
 
-## Usage
+## Commands
 
 ```bash
 # From inside any bitbucket.org repo:
@@ -131,7 +121,7 @@ Line numbers are real file line numbers, not diff line numbers.
 
 ## How auto-detect works
 
-bbb resolves workspace/repo per invocation. See [docs/design.md](docs/design.md) for the authoritative precedence chain. tl;dr:
+`bbb` resolves workspace/repo per invocation. See [docs/design.md](docs/design.md) for the authoritative precedence chain. tl;dr:
 
 - Inside a `bitbucket.org` git repo → workspace/repo derived from `origin` (or first matching remote).
 - Outside a git repo, or for one-off overrides → set env vars:
@@ -161,16 +151,7 @@ Basic Auth with `email:api-token` (Bitbucket required this format since Sept 202
 
 `bbb` sources `.env` directly, so shell metacharacters in values **execute on every invocation**. Keep `.env` to plain `KEY=value` lines — no backticks, no `$(...)`, no unmatched quotes. Switching to a safe parser is tracked as a follow-up.
 
-The `curl ... | bash` installer relies on HTTPS for transport integrity — there's no SHA pinning on `install.sh` or downloaded `bbb`. Same applies to `bbb install-agent` (fetches from `raw.githubusercontent.com`).
-
-If your threat model requires offline review, download first and inspect:
-
-```bash
-curl --proto '=https' --tlsv1.2 -fsSL \
-    https://raw.githubusercontent.com/restarter/bb-bash/main/scripts/install.sh -o install.sh
-less install.sh   # review
-bash install.sh
-```
+For inspecting `install.sh` before running it, see [docs/installation.md#security-inspection](docs/installation.md#security-inspection).
 
 ## API reference
 

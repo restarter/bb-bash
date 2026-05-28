@@ -288,7 +288,7 @@ batch_action() {
 _install_agent_fetch() {
     local src="$1" dest="$2"
     local ref="${BB_BASH_REF:-main}"
-    local url="https://raw.githubusercontent.com/restarter/bb-bash/${ref}/docs/${src}"
+    local url="https://raw.githubusercontent.com/restarter/bb-bash/${ref}/docs/agents/${src}"
 
     if [[ "${INSTALL_AGENT_DRY_RUN:-false}" == "true" ]]; then
         echo "  [dry-run] fetch: $url"
@@ -317,7 +317,7 @@ _install_agent_fetch() {
 _install_agent_md_section() {
     local dest="$1"
     local ref="${BB_BASH_REF:-main}"
-    local url="https://raw.githubusercontent.com/restarter/bb-bash/${ref}/docs/bb-bash-agent-snippet.md"
+    local url="https://raw.githubusercontent.com/restarter/bb-bash/${ref}/docs/agents/bb-bash-snippet.md"
     local marker='## Bitbucket via bb-bash'
 
     if [[ "${INSTALL_AGENT_DRY_RUN:-false}" == "true" ]]; then
@@ -343,6 +343,10 @@ _install_agent_md_section() {
         rm -f "$tmp"
         die "failed to fetch $url"
     fi
+
+    # Ensure parent dir exists — required for global mode where $HOME/.claude/
+    # may not have been created yet. No-op for project-level (parent is cwd).
+    mkdir -p -- "$(dirname -- "$dest")"
 
     if [[ -f "$dest" ]]; then
         # Atomic-ish append: assemble (existing + separator + snippet) in a
@@ -793,6 +797,7 @@ cmd_install_agent() {
     local has_flag=false
     INSTALL_AGENT_DRY_RUN=false
     INSTALL_AGENT_FORCE=false
+    INSTALL_AGENT_GLOBAL=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -800,34 +805,49 @@ cmd_install_agent() {
             --skill)    want_skill=true; has_flag=true ;;
             --claude) want_claude=true; has_flag=true ;;
             --agents)   want_agents=true; has_flag=true ;;
+            --global)   INSTALL_AGENT_GLOBAL=true ;;
             --dry-run)  INSTALL_AGENT_DRY_RUN=true ;;
             --force)    INSTALL_AGENT_FORCE=true ;;
             -h|--help)
                 cat <<'EOF'
-Usage: bbb install-agent [--rule] [--skill] [--claude] [--agents] [--dry-run] [--force]
+Usage: bbb install-agent [--rule] [--skill] [--claude] [--agents] [--global] [--dry-run] [--force]
 
-Drop AI-agent integration artifacts into the current directory.
+Drop AI-agent integration artifacts into the current project (default) or
+into user-global Claude Code config (--global).
 
 Artifacts (combine any subset):
-  --rule       .claude/rules/bb-bash-rule.md       (Claude Code, auto-load)
-  --skill      .claude/skills/bb-bash/SKILL.md     (Claude Code, lazy-load)
-  --claude   ./CLAUDE.md                         (append "## Bitbucket via bb-bash" section)
-  --agents     ./AGENTS.md                         (append "## Bitbucket via bb-bash" section)
+  --rule       drop the Claude Code rule
+                  project: ./.claude/rules/bb-bash-rule.md
+                  global:  ~/.claude/rules/bb-bash-rule.md
+  --skill      drop the Claude Code skill
+                  project: ./.claude/skills/bb-bash/SKILL.md
+                  global:  ~/.claude/skills/bb-bash/SKILL.md
+  --claude     append snippet to CLAUDE.md
+                  project: ./CLAUDE.md
+                  global:  ~/.claude/CLAUDE.md
+  --agents     append snippet to AGENTS.md (project only — no standard global path)
+                  project: ./AGENTS.md
 
 Modifiers:
+  --global     install into user-global Claude Code config ($HOME/.claude/)
+               instead of the current project. Requires explicit --rule/--skill/
+               --claude (no interactive). --agents is incompatible (no global path).
   --dry-run    Print actions, do not write to disk
   --force      Overwrite existing files / re-append to CLAUDE.md/AGENTS.md
 
-Without flags: interactive prompt (enter letter codes like 'rsca').
+Without flags: interactive prompt (enter letter codes like 'rsca'). Interactive
+mode operates on the current project only.
 
 Env:
   BB_BASH_REF   Git ref to fetch artifacts from (default: main).
-               Pin to a release tag for reproducibility, e.g. BB_BASH_REF=v0.1.2.
+               Pin to a release tag for reproducibility, e.g. BB_BASH_REF=v0.2.0.
 
 Examples:
-  bbb install-agent --rule --skill
-  bbb install-agent --claude --dry-run
-  BB_BASH_REF=v0.1.2 bbb install-agent --rule --skill --agents
+  bbb install-agent --rule --skill                  # project-level Claude Code
+  bbb install-agent --rule --global                 # user-global rule (every project)
+  bbb install-agent --rule --skill --global         # global rule + skill
+  bbb install-agent --claude --dry-run              # preview snippet append
+  BB_BASH_REF=v0.2.0 bbb install-agent --rule       # pin to a release tag
 EOF
                 return 0
                 ;;
@@ -835,6 +855,11 @@ EOF
         esac
         shift
     done
+
+    if [[ "$INSTALL_AGENT_GLOBAL" == "true" ]]; then
+        [[ "$has_flag" == "true" ]] || die "--global requires at least one of --rule/--skill/--claude (no interactive mode in global)"
+        [[ "$want_agents" != "true" ]] || die "--agents incompatible with --global: AGENTS.md has no standard user-global location. Install per-project (drop --global)."
+    fi
 
     if [[ "$has_flag" != "true" ]]; then
         # Under set -e, read -r -p crashes with no message on EOF/closed-stdin
@@ -864,18 +889,33 @@ EOF
         [[ "$choice" == *a* ]] && want_agents=true
     fi
 
+    local rule_dest skill_dest claudemd_dest agentsmd_dest base_label
+    if [[ "$INSTALL_AGENT_GLOBAL" == "true" ]]; then
+        rule_dest="$HOME/.claude/rules/bb-bash-rule.md"
+        skill_dest="$HOME/.claude/skills/bb-bash/SKILL.md"
+        claudemd_dest="$HOME/.claude/CLAUDE.md"
+        # agentsmd_dest unset — validated to be blocked above
+        base_label="$HOME/.claude (global)"
+    else
+        rule_dest=".claude/rules/bb-bash-rule.md"
+        skill_dest=".claude/skills/bb-bash/SKILL.md"
+        claudemd_dest="CLAUDE.md"
+        agentsmd_dest="AGENTS.md"
+        base_label="$PWD"
+    fi
+
     local mode_label
     if [[ "$INSTALL_AGENT_DRY_RUN" == "true" ]]; then
         mode_label="dry-run"
     else
         mode_label="live"
     fi
-    echo "Installing into $PWD ($mode_label, ref=${BB_BASH_REF:-main})"
+    echo "Installing into $base_label ($mode_label, ref=${BB_BASH_REF:-main})"
 
-    $want_rule     && _install_agent_fetch "bb-bash-rule.md"        ".claude/rules/bb-bash-rule.md"
-    $want_skill    && _install_agent_fetch "bb-bash-skill/SKILL.md" ".claude/skills/bb-bash/SKILL.md"
-    $want_claude && _install_agent_md_section "CLAUDE.md"
-    $want_agents   && _install_agent_md_section "AGENTS.md"
+    $want_rule     && _install_agent_fetch "bb-bash-rule.md"        "$rule_dest"
+    $want_skill    && _install_agent_fetch "bb-bash-skill/SKILL.md" "$skill_dest"
+    $want_claude   && _install_agent_md_section "$claudemd_dest"
+    $want_agents   && _install_agent_md_section "$agentsmd_dest"
 
     echo "Done."
 }

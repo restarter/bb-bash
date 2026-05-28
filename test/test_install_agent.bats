@@ -72,14 +72,14 @@ _run_bbb() {
     [ "$status" -eq 0 ]
     [ -f "$TEST_TMP/.claude/rules/bb-bash-rule.md" ]
     grep -q "rule body" "$TEST_TMP/.claude/rules/bb-bash-rule.md"
-    contains "$(last_curl_call)" "*raw.githubusercontent.com/restarter/bb-bash/main/docs/bb-bash-rule.md*"
+    contains "$(last_curl_call)" "*raw.githubusercontent.com/restarter/bb-bash/main/docs/agents/bb-bash-rule.md*"
 }
 
 @test "install-agent: BB_BASH_REF pins the ref in the URL" {
     stub_curl_download "pinned body"
     BB_BASH_REF=v0.1.2 _run_bbb install-agent --rule
     [ "$status" -eq 0 ]
-    contains "$(last_curl_call)" "*restarter/bb-bash/v0.1.2/docs/bb-bash-rule.md*"
+    contains "$(last_curl_call)" "*restarter/bb-bash/v0.1.2/docs/agents/bb-bash-rule.md*"
 }
 
 @test "install-agent: --rule skips when file already exists, no --force" {
@@ -168,6 +168,85 @@ combined content"
     [ -f "$TEST_TMP/AGENTS.md" ]
     grep -q "combined content" "$TEST_TMP/CLAUDE.md"
     grep -q "combined content" "$TEST_TMP/AGENTS.md"
+}
+
+# --- --global flag (bb-bash-6ru) ---
+#
+# Global install writes to $HOME/.claude/ instead of $PWD/.claude/. The four
+# tests below pin: the two validation gates (alone, with --agents) and the
+# three working destinations (--rule, --skill, --claude). HOME is forced to
+# $TEST_TMP/h so no test touches the real ~/.claude.
+
+@test "install-agent: --global alone (no selector) dies with explainer" {
+    HOME="$TEST_TMP/h" _run_bbb install-agent --global --dry-run
+    [ "$status" -ne 0 ]
+    contains "$output" "*--global requires*"
+}
+
+@test "install-agent: --agents --global dies (no standard global AGENTS.md)" {
+    HOME="$TEST_TMP/h" _run_bbb install-agent --agents --global --dry-run
+    [ "$status" -ne 0 ]
+    contains "$output" "*--agents incompatible with --global*"
+}
+
+@test "install-agent: --rule --global writes to \$HOME/.claude/rules/" {
+    stub_curl_download "rule body" 200
+    HOME="$TEST_TMP/h" _run_bbb install-agent --rule --global
+    [ "$status" -eq 0 ]
+    [ -f "$TEST_TMP/h/.claude/rules/bb-bash-rule.md" ]
+    grep -q "rule body" "$TEST_TMP/h/.claude/rules/bb-bash-rule.md"
+    # Project-level path should NOT have been written
+    [ ! -e "$TEST_TMP/.claude/rules/bb-bash-rule.md" ]
+}
+
+@test "install-agent: --skill --global writes to \$HOME/.claude/skills/bb-bash/" {
+    stub_curl_download "skill body" 200
+    HOME="$TEST_TMP/h" _run_bbb install-agent --skill --global
+    [ "$status" -eq 0 ]
+    [ -f "$TEST_TMP/h/.claude/skills/bb-bash/SKILL.md" ]
+    grep -q "skill body" "$TEST_TMP/h/.claude/skills/bb-bash/SKILL.md"
+    [ ! -e "$TEST_TMP/.claude/skills/bb-bash/SKILL.md" ]
+}
+
+@test "install-agent: --claude --global appends to \$HOME/.claude/CLAUDE.md" {
+    stub_curl_download "## Bitbucket via bb-bash
+snippet body" 200
+    HOME="$TEST_TMP/h" _run_bbb install-agent --claude --global
+    [ "$status" -eq 0 ]
+    [ -f "$TEST_TMP/h/.claude/CLAUDE.md" ]
+    grep -q "Bitbucket via bb-bash" "$TEST_TMP/h/.claude/CLAUDE.md"
+    # Project-level CLAUDE.md should NOT have been touched
+    [ ! -e "$TEST_TMP/CLAUDE.md" ]
+}
+
+# --- URL→file mapping regression (bb-bash-6ru) ---
+#
+# Guard against renaming an artifact locally without updating the fetch URL
+# in bbb (or vice versa). Runs install-agent --dry-run, parses every emitted
+# fetch URL, strips the github-raw prefix, and asserts the resulting relative
+# path is a real file in the repo. Self-maintaining: if a new artifact is
+# added to install-agent, this test picks it up automatically. Does NOT touch
+# GitHub — purely a local-tree consistency check.
+
+@test "install-agent: every fetch URL maps to an existing file in the repo" {
+    local repo_root
+    repo_root="$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)"
+    cd "$TEST_TMP"
+
+    run "$repo_root/bbb" install-agent --rule --skill --claude --agents --dry-run
+    [ "$status" -eq 0 ]
+
+    local url rel missing=0
+    while IFS= read -r url; do
+        [ -z "$url" ] && continue
+        rel="${url#https://raw.githubusercontent.com/restarter/bb-bash/main/}"
+        if [ ! -f "$repo_root/$rel" ]; then
+            echo "MISSING in repo: $rel  (url: $url)" >&2
+            missing=$((missing + 1))
+        fi
+    done < <(printf '%s\n' "$output" | grep -oE 'https://raw\.githubusercontent\.com/[^[:space:]]+' | sort -u)
+
+    [ "$missing" -eq 0 ]
 }
 
 # --- top-level guard regression (auth/repo resolution refactor) ---

@@ -229,7 +229,7 @@ final_message() {
 
    ${CYAN}${BOLD}Next steps${NC}
      1. Edit ${BOLD}${DATA_DIR}/.env${NC} with your Bitbucket credentials.
-        Token: ${DIM}https://bitbucket.org/account/settings/api-tokens/${NC}
+        Token: ${DIM}https://id.atlassian.com/manage-profile/security/api-tokens${NC}
      2. cd into any bitbucket.org repo and run:
         ${BOLD}bbb pr list${NC}
 

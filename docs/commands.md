@@ -203,40 +203,43 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 ## install-agent
 
 **Synopsis:**
-- `bbb install-agent [--rule] [--skill] [--claude] [--agents] [--dry-run] [--force]`
+- `bbb install-agent [--rule] [--skill] [--claude] [--agents] [--global] [--dry-run] [--force]`
 
-**Description:** Drop AI-agent integration artifacts into the current directory. Combine any subset of `--rule`, `--skill`, `--claude`, `--agents`. Without flags, prompts interactively for letter codes (`rsca`). Unlike `pr` and `raw`, this command does NOT require `.env` credentials or a Bitbucket-repo CWD — it runs from any directory.
+**Description:** Drop AI-agent integration artifacts into the current project (default) or into user-global Claude Code config (`--global`). Combine any subset of `--rule`, `--skill`, `--claude`, `--agents`. Without flags, prompts interactively for letter codes (`rsca`). Unlike `pr` and `raw`, this command does NOT require `.env` credentials or a Bitbucket-repo CWD — it runs from any directory.
 
 **Flags:**
 
-| Flag | Destination | Behavior |
-|------|-------------|----------|
-| `--rule` | `./.claude/rules/bb-bash-rule.md` | Claude Code-only, auto-loaded into every context |
-| `--skill` | `./.claude/skills/bb-bash/SKILL.md` | Claude Code-only, lazy-loaded when invoked |
-| `--claude` | `./CLAUDE.md` | Append `## Bitbucket via bb-bash` section (create file if missing) |
-| `--agents` | `./AGENTS.md` | Same section, written to `AGENTS.md` (cross-tool standard) |
-| `--dry-run` | — | Print actions, write nothing to disk |
-| `--force` | — | Overwrite existing files / re-append section even if marker is present |
+| Flag | Project destination | Global destination (`--global`) | Behavior |
+|------|---------------------|---------------------------------|----------|
+| `--rule` | `./.claude/rules/bb-bash-rule.md` | `~/.claude/rules/bb-bash-rule.md` | Claude Code rule, auto-loaded |
+| `--skill` | `./.claude/skills/bb-bash/SKILL.md` | `~/.claude/skills/bb-bash/SKILL.md` | Claude Code skill, lazy-loaded |
+| `--claude` | `./CLAUDE.md` | `~/.claude/CLAUDE.md` | Append `## Bitbucket via bb-bash` section (create file if missing) |
+| `--agents` | `./AGENTS.md` | *not supported — error* | Cross-tool standard; no widely-adopted user-global path |
+| `--global` | — | — | Install into user-global Claude Code config (`$HOME/.claude/`) for cross-project availability. Requires explicit `--rule`/`--skill`/`--claude` (no interactive). Incompatible with `--agents`. |
+| `--dry-run` | — | — | Print actions, write nothing to disk |
+| `--force` | — | — | Overwrite existing files / re-append section even if marker is present |
 
 **Idempotency:** by default skips any artifact that already exists. For `CLAUDE.md` / `AGENTS.md` the check is marker-based (`## Bitbucket via bb-bash`) — file may exist for other reasons without skipping. Re-running is safe.
 
-**Source:** artifacts are fetched from `https://raw.githubusercontent.com/restarter/bb-bash/${BB_BASH_REF:-main}/docs/`. Pin to a release tag for reproducibility:
+**Source:** artifacts are fetched from `https://raw.githubusercontent.com/restarter/bb-bash/${BB_BASH_REF:-main}/docs/agents/`. Pin to a release tag for reproducibility:
 
 ```bash
-BB_BASH_REF=v0.1.2 bbb install-agent --rule --skill --claude --agents
+BB_BASH_REF=v0.2.0 bbb install-agent --rule --skill --claude --agents
 ```
 
 **Examples:**
 
 ```bash
-bbb install-agent                                        # interactive
-bbb install-agent --rule --skill                         # Claude Code-native pair
-bbb install-agent --rule --skill --claude --agents     # everything
-bbb install-agent --claude --dry-run                   # preview without writing
-bbb install-agent --rule --force                         # overwrite existing rule
+bbb install-agent                                # interactive (project)
+bbb install-agent --rule --skill                 # project-level Claude Code pair
+bbb install-agent --rule --global                # user-global rule (auto-loaded in every project)
+bbb install-agent --rule --skill --global        # global rule + skill
+bbb install-agent --claude --global              # append snippet to ~/.claude/CLAUDE.md
+bbb install-agent --claude --dry-run             # preview snippet append
+bbb install-agent --rule --force                 # overwrite existing rule
 ```
 
-**Interactive mode:** prints status of each artifact (present/missing/no-section), then reads letter codes. `rsca` = all four; `rs` = rule+skill; `q` (or empty input) = quit. Invalid characters in the input are rejected; whitelist is `r`/`s`/`c`/`a`. Refuses to run interactively when stdin is not a TTY (`bbb install-agent < /dev/null` or CI contexts) — pass explicit flags instead.
+**Interactive mode:** prints status of each artifact (present/missing/no-section), then reads letter codes. `rsca` = all four; `rs` = rule+skill; `q` (or empty input) = quit. Invalid characters in the input are rejected; whitelist is `r`/`s`/`c`/`a`. Refuses to run interactively when stdin is not a TTY (`bbb install-agent < /dev/null` or CI contexts) — pass explicit flags instead. Interactive mode operates on the current project only; for global install pass explicit `--global` with at least one of `--rule`/`--skill`/`--claude`.
 
 ---
 
