@@ -1,6 +1,6 @@
 # bb-bash (bbb)
 
-> **Bitbucket Cloud CLI built for AI coding agents** — single-file bash with zero-config repo auto-detect, plus `CLAUDE.md` snippet, Rule, and Skill bundled out of the box.
+> **Bitbucket Cloud CLI built for AI coding agents** — single-file bash with zero-config repo auto-detect and inline PR review, plus `CLAUDE.md` snippet, Rule, and Skill bundled out of the box.
 
 `bbb` (the binary) wraps the Bitbucket Cloud REST API 2.0 so you and your AI agent can drive PR review, inline comments, approve, decline, merge, and create — all from chat or terminal, without leaving your editor. `cd` into any Bitbucket-Cloud-backed repo and run `bbb pr list` — workspace/repo are auto-detected from `git remote`, no per-project setup. No build step, no package manager: one bash script, two dependencies (`curl`, `jq`).
 
