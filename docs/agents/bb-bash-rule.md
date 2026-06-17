@@ -64,6 +64,7 @@ bbb pr open <id>
 - **Force-push effect** — Bitbucket Cloud marks inline comments as "outdated" when the referenced line changes; the comment is preserved (not removed). After a force-push, re-post on the new line rather than relying on the stale one.
 - **Before approve** — run `git fetch && git log <previous-approve-ref>..HEAD` to see if commits landed after your last review. Some repos have "Reset approvals on new commits" enabled (auto-dismiss); others don't — when in doubt, redo the review.
 - **Comment markdown** — Bitbucket Cloud uses Python-Markdown. Supported: fenced code blocks with language (`` ```php ``), tables (pipe syntax), strikethrough (`~~text~~`), lists, links, blockquotes, mentions (`@accountname` or `@email`). **HTML tags are NOT supported.** Full reference: https://support.atlassian.com/bitbucket-cloud/docs/markup-comments/
+- **Blank line before lists** — Python-Markdown needs a blank line between a text line and a following list (or table/heading). A list placed directly under a `**Heading:**` lead-in is parsed as a lazy continuation of that paragraph and renders as one run-on line. The API still returns 201 and the raw source looks fine, so the break is invisible until the PR is opened. Always leave a blank line before a list.
 
 ## Review patterns
 
