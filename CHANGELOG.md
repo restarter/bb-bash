@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-18
+
 ### Added
 - All 3 AI artifacts (Rule / Snippet / Skill) gained a **blank-line-before-lists** convention: Python-Markdown on Bitbucket Cloud needs a blank line between a text line and a following list (or table/heading), otherwise the list renders as one run-on line. The API returns 201 and the raw source looks fine, so the break is invisible until the PR is opened — the single most common formatting bite. Skill carries a CORRECT/WRONG example; Rule and Snippet are terse. (bb-bash-8vy)
 
