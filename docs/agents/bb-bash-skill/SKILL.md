@@ -158,6 +158,21 @@ bbb pr decline 65 67 89                                              # batch clo
 - **Force-push effect**: Bitbucket Cloud marks inline comments as "outdated" when the referenced line changes, but the comment is **preserved, not removed**. After a force-push that moved the line, prefer re-posting on the new line over editing the outdated one — the outdated comment is collapsed in the UI and easy to miss.
 - **Before approve**: run `git fetch && git log <previous-approve-ref>..HEAD` to see if commits landed after your last review. Bitbucket Cloud has a per-repo "Reset approvals on new commits" setting — if enabled, your approve auto-dismisses; if disabled, your approve persists across new commits. When in doubt, redo the review.
 - **Comment markdown — Bitbucket Cloud uses Python-Markdown**, NOT GitHub-Flavored Markdown. Supported: fenced code blocks with language (`` ```php ``, `` ```bash `` — syntax highlighting via `codehilite` extension), tables (pipe syntax, via `tables` extension), strikethrough (`~~text~~`, via `del`), lists, links, blockquotes, footnotes, headings. **Mentions:** `@accountname` or `@email` (not GitHub-style `@username`). **HTML tags are NOT supported** (no `<table>`, no `<br>`, no `<details>`). Full reference: https://support.atlassian.com/bitbucket-cloud/docs/markup-comments/
+- **Blank line before lists** — Python-Markdown needs a blank line between a paragraph and a following block (list, table, heading). A list placed directly under a text line (e.g. a `**Heading:**` lead-in) is parsed as a lazy continuation of that paragraph and renders as **one run-on line** (the soft newlines collapse to spaces). The API accepts it (HTTP 201) and the raw source looks fine — the break is invisible until someone opens the rendered PR. This is the single most common formatting bite. Same rule applies to tables and headings jammed under a paragraph.
+
+  ```markdown
+  WRONG — renders as one run-on line:
+  **Findings:**
+  - first
+  - second
+
+  CORRECT — blank line before the list:
+  **Findings:**
+
+  - first
+  - second
+  ```
+
 - **Auto-detect**: workspace/repo are inferred from the bitbucket.org remote of the current directory. No env vars needed inside a Bitbucket repo. Override with `BB_BASH_REMOTE=<name>` when there are multiple remotes.
 - **Output**: plain text, no JSON wrapping unless using `bbb raw`. Parse with `jq` only when calling `bbb raw`.
 - **Token scopes**: `read:repository:bitbucket`, `read:pullrequest:bitbucket`, `write:pullrequest:bitbucket`. Optional: `read:pipeline:bitbucket` for `pr checks` to show Pipelines.
