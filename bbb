@@ -673,9 +673,10 @@ cmd_pr_diff() {
 pipelines_for_pr() {
     local branch="$2" body
     local scan="${PIPELINE_SCAN:?internal error: require_pipeline_scan was not called}"
-    # Strip leading zeros: require_numeric accepts "007", but JSON forbids a
-    # leading zero, so --argjson would make jq choke — and comparing "007"
-    # against tostring(7) as strings would silently never match.
+    # Normalize the PR id to a number for the --argjson comparison below.
+    # require_numeric accepts "007"; 10# forces base-10 so [[ ]] and the shell
+    # don't read a 0-prefixed value as octal. (jq itself does accept
+    # `--argjson pr 007`, so this is about the shell, not jq.)
     local pr_id=$((10#$1))
     if ! body=$(api_get --soft "/pipelines/?sort=-created_on&pagelen=${scan}"); then
         return 1
@@ -807,8 +808,28 @@ pipeline_step_log() {
         die "${label} step \"${step_name}\" is still running — no log yet"
     fi
 
+    # Fetch the log BEFORE printing the header — api_get dies on any error, and
+    # a header echoed first would be left dangling above a bare API error (or,
+    # for an empty log, above nothing).
+    local log
+    log=$(api_get "/pipelines/${uuid_enc}/steps/$(urlencode "$step_uuid")/log")
     echo "--- ${label} step \"${step_name}\" [${step_state}] ---"
-    api_get "/pipelines/${uuid_enc}/steps/$(urlencode "$step_uuid")/log"
+    printf '%s\n' "$log"
+}
+
+# parse_step_flag [args...] — parse a trailing [--step=N] and publish STEP_N.
+# Plain statement only, never in a subshell: it dies on a bad flag, and a
+# subshell die would be swallowed (see require_pipeline_scan).
+parse_step_flag() {
+    STEP_N=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --step=)  die "--step= requires a value, e.g. --step=2" ;;
+            --step=*) STEP_N="${1#--step=}" ;;
+            *)        die "Unknown flag: $1" ;;
+        esac
+        shift
+    done
 }
 
 # pipeline log <build#> [--step=N] — print a pipeline step's log.
@@ -819,16 +840,7 @@ cmd_pipeline_log() {
     require_numeric "build number" "$build"
 
     require_pipeline_scan
-
-    local step_n=""
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --step=)  die "--step= requires a value, e.g. --step=2" ;;
-            --step=*) step_n="${1#--step=}" ;;
-            *)        die "Unknown flag: $1" ;;
-        esac
-        shift
-    done
+    parse_step_flag "$@"
 
     # /pipelines/{pipeline_uuid} is what the API documents; build numbers work
     # in practice but are not guaranteed, so fall back to scanning the list.
@@ -856,7 +868,7 @@ cmd_pipeline_log() {
     fi
     [[ -n "$uuid" ]] || die "Pipeline #${build} not found (scanned the ${PIPELINE_SCAN} most recent — raise BB_BASH_PIPELINE_SCAN, max 100)"
 
-    pipeline_step_log "$uuid" "pipeline #${build}" "$step_n"
+    pipeline_step_log "$uuid" "pipeline #${build}" "$STEP_N"
 }
 
 # pr logs <id> [--step=N] — log of the newest pipeline for the PR's source branch.
@@ -867,16 +879,7 @@ cmd_pr_logs() {
     require_numeric "PR id" "$pr_id"
 
     require_pipeline_scan
-
-    local step_n=""
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --step=)  die "--step= requires a value, e.g. --step=2" ;;
-            --step=*) step_n="${1#--step=}" ;;
-            *)        die "Unknown flag: $1" ;;
-        esac
-        shift
-    done
+    parse_step_flag "$@"
 
     local pr branch pipes uuid build scan_hint
     pr=$(api_get "/pullrequests/${pr_id}")
@@ -896,7 +899,7 @@ cmd_pr_logs() {
         die "No pipelines found for PR ${pr_id} (branch: ${branch})${scan_hint}"
     fi
 
-    pipeline_step_log "$uuid" "PR ${pr_id} pipeline #${build}" "$step_n"
+    pipeline_step_log "$uuid" "PR ${pr_id} pipeline #${build}" "$STEP_N"
 }
 
 cmd_pr_comments() {

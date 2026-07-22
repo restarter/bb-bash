@@ -9,7 +9,7 @@ bb-bash is one executable script (`bbb` on disk). Dependencies: `curl`, `jq`. No
 The script is divided into clearly-labeled sections (line numbers shift over time — refer by label):
 
 1. **Usage docstring** — header comment doubles as inline help
-2. **Helpers** — `die`, `resolve_script_dir`, `require_args`, `require_numeric`, `urlencode`, `resolve_workspace_repo`, `batch_action`, and the `JQ_NORM` jq prelude that normalizes Bitbucket state vocabularies for every renderer. `resolve_script_dir` is defined here (not in the top-level guard) so tests can source bbb and exercise it directly; it anchors `.env` discovery to the real script directory by following symlinks portably (no `readlink -f`).
+2. **Helpers** — `die`, `resolve_script_dir`, `require_args`, `require_numeric`, `require_pipeline_scan` (validates `BB_BASH_PIPELINE_SCAN` and publishes the `PIPELINE_SCAN` global — must be called as a plain statement in the caller's shell, never in a subshell), `urlencode`, `resolve_workspace_repo`, `batch_action`, and the `JQ_NORM` jq prelude that normalizes Bitbucket state vocabularies for every renderer. `resolve_script_dir` is defined here (not in the top-level guard) so tests can source bbb and exercise it directly; it anchors `.env` discovery to the real script directory by following symlinks portably (no `readlink -f`).
 3. **API helpers** — `api_get`, `api_post` (both with `--soft`), `api_put`, `api_delete`
 4. **Commands** — `cmd_pr_*`, `cmd_pipeline_*`, `cmd_raw*` functions, plus the shared `pipelines_for_pr` / `pipeline_step_log` helpers they build on
 5. **`usage()`** — printed help text
@@ -73,7 +73,9 @@ Soft mode is used by:
 - Batch commands (`pr approve`, `pr decline`) — one failure shouldn't kill the whole loop
 - Optional endpoints (`pr checks` pipelines) — degrade gracefully when token lacks scope. `pr logs` / `pipeline log` use `--soft` only to give a readable message before dying: the scope is mandatory for them, there is nothing to degrade to.
 
-Callers under `set -e` (which the script enables at top) MUST use the `if … then … else … fi` form, never bare `||`, when invoking `--soft`:
+Note that `--soft` governs only HTTP status, not the `curl` invocation itself: every `api_*` helper `die`s on a non-zero `curl` exit (a DNS/TLS/connection failure), soft mode or not, so a transport error is never mistaken for an empty successful response.
+
+Callers under `set -e` (which the script enables at top) SHOULD use the `if … then … else … fi` form when invoking `--soft`. A bare `x=$(api_get --soft …) || …` is safe **only** when the assignment stands alone (a separate `local x` declaration first): `local x=$(…) || …` masks the exit status because `local` itself succeeds. `pipelines_for_pr` uses the `if` form; the `|| return 1` sites in it keep the declaration separate.
 
 ```bash
 if resp=$(api_post --soft "$endpoint" "{}"); then

@@ -305,13 +305,15 @@ teardown() {
     contains "$output" '*"a": 1*'
 }
 
-@test "raw --text: passes a plain-text body through untouched" {
+@test "raw --text: passes a plain-text body through untouched, to the given endpoint" {
     stub_curl 'plain log line
 second line'
     run cmd_raw --text "/pipelines/%7Bp%7D/steps/%7Bs%7D/log"
     [ "$status" -eq 0 ]
     contains "$output" '*plain log line*'
     contains "$output" '*second line*'
+    # The endpoint must actually reach curl — otherwise this passes on any URL.
+    contains "$(last_curl_call)" '*/pipelines/%7Bp%7D/steps/%7Bs%7D/log*'
 }
 
 @test "raw: rejects a missing endpoint" {
@@ -330,6 +332,9 @@ second line'
     contains "$(nth_curl_call 2)" '*%7Bp-1%7D*'
     contains "$(nth_curl_call 3)" '*%7Bs-1%7D*'
     contains "$output" '*step log body*'
+    # The steps endpoint must carry an explicit pagelen — its default of 10
+    # would silently make "last step" the tenth on a longer pipeline.
+    contains "$(nth_curl_call 2)" '*pagelen=100*'
 }
 
 @test "pipeline log: falls back to a list scan when direct lookup fails" {
