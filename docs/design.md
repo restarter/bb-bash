@@ -71,7 +71,7 @@ The check `[[ "$url" =~ (^|@|/)bitbucket\.org[:/] ]]` uses anchored regex to rej
 Soft mode is used by:
 
 - Batch commands (`pr approve`, `pr decline`) — one failure shouldn't kill the whole loop
-- Optional endpoints (`pr checks` pipelines, `pr logs`, `pipeline log`) — degrade gracefully when token lacks scope
+- Optional endpoints (`pr checks` pipelines) — degrade gracefully when token lacks scope. `pr logs` / `pipeline log` use `--soft` only to give a readable message before dying: the scope is mandatory for them, there is nothing to degrade to.
 
 Callers under `set -e` (which the script enables at top) MUST use the `if … then … else … fi` form, never bare `||`, when invoking `--soft`:
 

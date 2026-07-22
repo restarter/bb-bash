@@ -41,12 +41,13 @@ Skipped by default.
 
 ## Adding a new command
 
-1. Add a `cmd_pr_<name>()` function in `bbb`, placed near related commands
-2. Add a case to the router's `pr` subcommand block
-3. Add a usage line to `usage()`
+1. Add a `cmd_<group>_<name>()` function in `bbb`, placed near related commands
+2. Add a case to the router (a new top-level group, like `pipeline`, needs its own nested `case` block)
+3. Add a usage line to `usage()` and to the header docstring
 4. Update `README.md` Usage section + add a full entry in [`docs/commands.md`](commands.md)
 5. Add bats tests in `test/test_pr_commands.bats` — **assert both** response parsing AND outbound payload (via `last_curl_call`)
 6. Add a line to `CHANGELOG.md [Unreleased]`
+7. Reflect the command and any new caveat in **all three** AI artifacts — [`bb-bash-rule.md`](agents/bb-bash-rule.md), [`bb-bash-snippet.md`](agents/bb-bash-snippet.md), [`bb-bash-skill/SKILL.md`](agents/bb-bash-skill/SKILL.md). They are deliberately kept at factual parity so a user can pick any one; see [`agents/README.md`](agents/README.md)
 
 ## Code style
 
@@ -85,7 +86,7 @@ Always capture outbound payload to catch wrong-field bugs. The `last_curl_call` 
 }
 ```
 
-For multi-call commands (`pr checks` makes 3 API calls; `pr merge` may make 2) use `stub_curl_seq`:
+For multi-call commands (`pr checks` makes 3 API calls; `pr logs` makes 4; `pr merge` may make 2) use `stub_curl_seq`. Queue depth is itself an assertion — the stub exits 99 when a command asks for more responses than were queued, so an under-queued sequence fails loudly rather than silently returning empty:
 
 ```bash
 stub_curl_seq \

@@ -72,7 +72,7 @@ CI: see `.github/workflows/ci.yml` — runs shellcheck + bats on push/PR (SHA-pi
 Single-file bash script (`bbb`), divided into clearly-labeled sections. See [docs/design.md](docs/design.md) for full details. Quick map:
 
 1. Usage docstring (header comment)
-2. Helpers (`die`, `resolve_script_dir`, `require_args`, `resolve_workspace_repo`, `batch_action`)
+2. Helpers (`die`, `resolve_script_dir`, `require_args`, `require_numeric`, `urlencode`, `resolve_workspace_repo`, `batch_action`, `JQ_NORM`)
 3. API helpers (`api_get`, `api_post` with `--soft`; `api_put`, `api_delete`)
 4. Commands (`cmd_pr_*`, `cmd_pipeline_*`, `cmd_raw*`)
 5. `usage()`
@@ -96,11 +96,12 @@ Auto-detect precedence and URL parsing live in [docs/design.md](docs/design.md) 
 
 ### Adding a new command
 
-1. Add `cmd_pr_<name>()` function near related commands
-2. Add to router's `pr` subcommand `case` block
-3. Add to `usage()` help text
+1. Add the `cmd_<group>_<name>()` function near related commands
+2. Add to the router's `case` block (a new top-level group needs its own nested `case`)
+3. Add to `usage()` help text and the header docstring
 4. Update README usage + add full entry in `docs/commands.md`
 5. Add bats test in `test/test_pr_commands.bats` (with payload assertion)
 6. Add line to `CHANGELOG.md [Unreleased]`
+7. Reflect the command and any new caveat in **all three** AI artifacts (`docs/agents/bb-bash-rule.md`, `bb-bash-snippet.md`, `bb-bash-skill/SKILL.md`) — they are kept at factual parity, see `docs/agents/README.md`
 
 Full contributing guide: [docs/contributing.md](docs/contributing.md).

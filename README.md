@@ -26,7 +26,7 @@ Go to https://id.atlassian.com/manage-profile/security/api-tokens. Required scop
 - `read:repository:bitbucket`
 - `read:pullrequest:bitbucket`
 - `write:pullrequest:bitbucket`
-- `read:pipeline:bitbucket` — *optional, for `bbb pr checks` Pipelines output and for `bbb pr logs` / `bbb pipeline log`; gracefully omitted otherwise*
+- `read:pipeline:bitbucket` — *optional; `bbb pr checks` omits its Pipelines section gracefully without it, but `bbb pr logs` and `bbb pipeline log` require it*
 
 ### 2. Configure credentials
 
