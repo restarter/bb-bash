@@ -213,16 +213,66 @@ teardown() {
     contains "$output" '*pipelines unavailable*'
 }
 
-@test "pr checks: URL-encodes branch with slashes" {
+@test "pr checks: pipelines query carries no ref_name filter" {
     stub_curl_seq \
         200 '{"source":{"branch":{"name":"feature/x"}}}' \
         200 '{"values":[]}' \
         200 '{"values":[]}'
     run cmd_pr_checks 42
     [ "$status" -eq 0 ]
-    # Pipelines call (3rd) must URL-encode the branch slash
-    contains "$(nth_curl_call 3)" '*target.ref_name=feature%2Fx*'
-    not_contains "$(nth_curl_call 3)" '*target.ref_name=feature/x*'
+    # target.ref_name= is not a valid Bitbucket pipelines filter and can never
+    # match a PR-triggered pipeline — the query must not carry it.
+    not_contains "$(nth_curl_call 3)" '*target.ref_name*'
+    contains "$(nth_curl_call 3)" '*sort=-created_on*'
+}
+
+@test "pr checks: lists a PR-triggered pipeline (target.source, ref_name null)" {
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[]}' \
+        200 '{"values":[{"build_number":7,"state":{"name":"COMPLETED","result":{"name":"FAILED"}},"created_on":"2026-07-22T10:00:00+00:00","creator":{"display_name":"Dima"},"target":{"type":"pipeline_pullrequest_target","source":"feature/x","ref_name":null,"commit":{"hash":"abcdef1234567"},"selector":{"type":"pull-requests"}}}]}'
+    run cmd_pr_checks 42
+    [ "$status" -eq 0 ]
+    contains "$output" '*#7*'
+    contains "$output" '*fail*'
+    contains "$output" '*pull-requests*'
+    contains "$output" '*abcdef1*'
+}
+
+@test "pr checks: lists a branch-triggered pipeline (target.ref_name)" {
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[]}' \
+        200 '{"values":[{"build_number":9,"state":{"name":"COMPLETED","result":{"name":"SUCCESSFUL"}},"created_on":"2026-07-22T11:00:00+00:00","creator":{"display_name":"Dima"},"target":{"type":"pipeline_ref_target","ref_name":"feature/x","commit":{"hash":"1234567abcdef"},"selector":{"type":"branches"}}}]}'
+    run cmd_pr_checks 42
+    [ "$status" -eq 0 ]
+    contains "$output" '*#9*'
+    contains "$output" '*pass*'
+    contains "$output" '*branches*'
+}
+
+@test "pr checks: filters out pipelines from other branches" {
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[]}' \
+        200 '{"values":[{"build_number":7,"state":{"result":{"name":"FAILED"}},"created_on":"2026-07-22T10:00:00+00:00","creator":{"display_name":"D"},"target":{"source":"feature/x","commit":{"hash":"aaaaaaabbbb"},"selector":{"type":"pull-requests"}}},{"build_number":8,"state":{"result":{"name":"SUCCESSFUL"}},"created_on":"2026-07-22T10:30:00+00:00","creator":{"display_name":"D"},"target":{"ref_name":"main","commit":{"hash":"ccccccceeee"},"selector":{"type":"branches"}}}]}'
+    run cmd_pr_checks 42
+    [ "$status" -eq 0 ]
+    contains "$output" '*#7*'
+    not_contains "$output" '*#8*'
+}
+
+@test "pr checks: hints at the scan window when it comes back full with no match" {
+    export BB_BASH_PIPELINE_SCAN=1
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[]}' \
+        200 '{"values":[{"build_number":8,"state":{"result":{"name":"SUCCESSFUL"}},"created_on":"2026-07-22T10:30:00+00:00","creator":{"display_name":"D"},"target":{"ref_name":"main","commit":{"hash":"ccccccceeee"},"selector":{"type":"branches"}}}]}'
+    run cmd_pr_checks 42
+    unset BB_BASH_PIPELINE_SCAN
+    [ "$status" -eq 0 ]
+    contains "$output" '*no pipelines for this branch*'
+    contains "$output" '*BB_BASH_PIPELINE_SCAN*'
 }
 
 @test "pr checks: prints empty-state messages when no statuses or pipelines" {
@@ -246,4 +296,96 @@ teardown() {
     run cmd_pr_approve 5 "../foo" 7
     [ "$status" -ne 0 ]
     contains "$output" '*PR id must be numeric*'
+}
+
+@test "raw: pretty-prints JSON by default" {
+    stub_curl '{"a":1}'
+    run cmd_raw "/foo"
+    [ "$status" -eq 0 ]
+    contains "$output" '*"a": 1*'
+}
+
+@test "raw --text: passes a plain-text body through untouched" {
+    stub_curl 'plain log line
+second line'
+    run cmd_raw --text "/pipelines/%7Bp%7D/steps/%7Bs%7D/log"
+    [ "$status" -eq 0 ]
+    contains "$output" '*plain log line*'
+    contains "$output" '*second line*'
+}
+
+@test "raw: rejects a missing endpoint" {
+    run cmd_raw --text
+    [ "$status" -ne 0 ]
+    contains "$output" '*Usage: bbb raw*'
+}
+
+@test "pipeline log: URL-encodes braced UUIDs in path segments" {
+    stub_curl_seq \
+        200 '{"uuid":"{p-1}","build_number":7}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Build","state":{"name":"COMPLETED","result":{"name":"FAILED"}}}]}' \
+        200 'step log body'
+    run cmd_pipeline_log 7
+    [ "$status" -eq 0 ]
+    contains "$(nth_curl_call 2)" '*%7Bp-1%7D*'
+    contains "$(nth_curl_call 3)" '*%7Bs-1%7D*'
+    contains "$output" '*step log body*'
+}
+
+@test "pipeline log: falls back to a list scan when direct lookup fails" {
+    stub_curl_seq \
+        404 '{"error":{"message":"not found"}}' \
+        200 '{"values":[{"build_number":7,"uuid":"{p-1}"}]}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Build","state":{"result":{"name":"FAILED"}}}]}' \
+        200 'scanned log'
+    run cmd_pipeline_log 7
+    [ "$status" -eq 0 ]
+    contains "$output" '*scanned log*'
+}
+
+@test "pipeline log: picks the first FAILED step" {
+    stub_curl_seq \
+        200 '{"uuid":"{p-1}","build_number":7}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Setup","state":{"result":{"name":"SUCCESSFUL"}}},{"uuid":"{s-2}","name":"Test","state":{"result":{"name":"FAILED"}}}]}' \
+        200 'failing test output'
+    run cmd_pipeline_log 7
+    [ "$status" -eq 0 ]
+    contains "$output" '*Test*'
+    contains "$(nth_curl_call 3)" '*%7Bs-2%7D*'
+}
+
+@test "pipeline log: --step=0 is rejected, not silently the last step" {
+    stub_curl_seq \
+        200 '{"uuid":"{p-1}","build_number":7}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Setup","state":{"result":{"name":"SUCCESSFUL"}}},{"uuid":"{s-2}","name":"Test","state":{"result":{"name":"FAILED"}}}]}'
+    run cmd_pipeline_log 7 --step=0
+    [ "$status" -ne 0 ]
+    contains "$output" '*--step must be 1 or greater*'
+}
+
+@test "pipeline log: rejects a non-numeric build number" {
+    run cmd_pipeline_log "../etc/passwd"
+    [ "$status" -ne 0 ]
+    contains "$output" '*build number must be numeric*'
+}
+
+@test "pr logs: resolves the newest matching pipeline for the PR" {
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[{"build_number":7,"uuid":"{p-7}","target":{"source":"feature/x"}}]}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Build","state":{"result":{"name":"FAILED"}}}]}' \
+        200 'pr log body'
+    run cmd_pr_logs 42
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR 42 pipeline #7*'
+    contains "$output" '*pr log body*'
+}
+
+@test "pr logs: dies clearly when the PR has no pipelines" {
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[]}'
+    run cmd_pr_logs 42
+    [ "$status" -ne 0 ]
+    contains "$output" '*No pipelines found for PR 42*'
 }
