@@ -679,6 +679,100 @@ cmd_pr_checks() {
     fi
 }
 
+# pipeline_step_log <pipeline_uuid> <label> [step_number]
+# Print one step's log. Default step: the first FAILED one, else the last.
+# The log endpoint returns plain text (302 -> signed storage), so its body must
+# NOT go through jq — that is what makes `bbb raw .../log` come back empty.
+pipeline_step_log() {
+    local uuid="$1" label="$2" step_n="${3:-}"
+    local uuid_enc steps step_json step_uuid step_name step_state
+    uuid_enc=$(urlencode "$uuid")
+    steps=$(api_get "/pipelines/${uuid_enc}/steps/")
+
+    if [[ -n "$step_n" ]]; then
+        require_numeric "--step" "$step_n"
+        # require_numeric accepts 0, and .values[0 - 1] is .values[-1] — jq's
+        # last element. Without this guard --step=0 silently returns the wrong
+        # step instead of erroring.
+        [[ "$step_n" -ge 1 ]] || die "--step must be 1 or greater, got: $step_n"
+        step_json=$(echo "$steps" | jq --argjson n "$step_n" '.values[$n - 1] // empty')
+        [[ -n "$step_json" ]] || die "Step ${step_n} not found in ${label}"
+    else
+        step_json=$(echo "$steps" | jq '
+            [ .values[]? | select((.state.result.name // "") == "FAILED") ][0]
+            // (.values // [])[-1]
+            // empty')
+        [[ -n "$step_json" ]] || die "${label} has no steps"
+    fi
+
+    step_uuid=$(echo "$step_json" | jq -r '.uuid')
+    step_name=$(echo "$step_json" | jq -r '.name // "(unnamed)"')
+    step_state=$(echo "$step_json" | jq -r "$JQ_NORM"' norm(.state.result.name // .state.name)')
+
+    echo "--- ${label} step \"${step_name}\" [${step_state}] ---"
+    api_get "/pipelines/${uuid_enc}/steps/$(urlencode "$step_uuid")/log"
+}
+
+# pipeline log <build#> [--step=N] — print a pipeline step's log.
+cmd_pipeline_log() {
+    require_args 1 $# "Usage: bbb pipeline log <build#> [--step=N]"
+    local build="$1"
+    shift
+    require_numeric "build number" "$build"
+
+    local step_n=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --step=*) step_n="${1#--step=}" ;;
+            *)        die "Unknown flag: $1" ;;
+        esac
+        shift
+    done
+
+    # /pipelines/{pipeline_uuid} is what the API documents; build numbers work
+    # in practice but are not guaranteed, so fall back to scanning the list.
+    local uuid="" body
+    if body=$(api_get --soft "/pipelines/${build}"); then
+        uuid=$(echo "$body" | jq -r '.uuid // empty')
+    fi
+    if [[ -z "$uuid" ]]; then
+        body=$(api_get "/pipelines/?sort=-created_on&pagelen=${BB_BASH_PIPELINE_SCAN:-20}")
+        uuid=$(echo "$body" | jq -r --argjson b "$build" '
+            [ .values[]? | select(.build_number == $b) ][0].uuid // empty')
+    fi
+    [[ -n "$uuid" ]] || die "Pipeline #${build} not found (scanned the ${BB_BASH_PIPELINE_SCAN:-20} most recent — raise BB_BASH_PIPELINE_SCAN)"
+
+    pipeline_step_log "$uuid" "pipeline #${build}" "$step_n"
+}
+
+# pr logs <id> [--step=N] — log of the newest pipeline for the PR's source branch.
+cmd_pr_logs() {
+    require_args 1 $# "Usage: bbb pr logs <id> [--step=N]"
+    local pr_id="$1"
+    shift
+    require_numeric "PR id" "$pr_id"
+
+    local step_n=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --step=*) step_n="${1#--step=}" ;;
+            *)        die "Unknown flag: $1" ;;
+        esac
+        shift
+    done
+
+    local pr branch pipes uuid build
+    pr=$(api_get "/pullrequests/${pr_id}")
+    branch=$(echo "$pr" | jq -r '.source.branch.name')
+    pipes=$(pipelines_for_pr "$pr_id" "$branch") \
+        || die "Pipelines unavailable — token may lack read:pipeline scope"
+    uuid=$(echo "$pipes" | jq -r '.matches[0].uuid // empty')
+    build=$(echo "$pipes" | jq -r '.matches[0].build_number // empty')
+    [[ -n "$uuid" ]] || die "No pipelines found for PR ${pr_id} (branch: ${branch})"
+
+    pipeline_step_log "$uuid" "PR ${pr_id} pipeline #${build}" "$step_n"
+}
+
 cmd_pr_comments() {
     local pr_id="$1"
     require_numeric "PR id" "$pr_id"
@@ -818,8 +912,21 @@ cmd_pr_delete_comment() {
 }
 
 cmd_raw() {
-    local endpoint="$1"
-    api_get "$endpoint" | jq '.'
+    local text=0
+    if [[ "${1:-}" == "--text" ]]; then
+        text=1
+        shift
+    fi
+    local endpoint="${1:-}"
+    [[ -n "$endpoint" ]] || die "Usage: bbb raw [--text] <endpoint>"
+    if [[ $text -eq 1 ]]; then
+        # Plain-text passthrough. Some endpoints (pipeline step logs, diffs)
+        # return text; forcing them through jq yields a parse error and, under
+        # pipefail, an empty stdout.
+        api_get "$endpoint"
+    else
+        api_get "$endpoint" | jq '.'
+    fi
 }
 
 cmd_raw_post() {
@@ -1029,6 +1136,7 @@ main() {
                 open)           cmd_pr_open "$@" ;;
                 diff)           require_args 1 $# "Usage: bbb pr diff <id>"; cmd_pr_diff "$1" ;;
                 checks)         cmd_pr_checks "$@" ;;
+                logs)           cmd_pr_logs "$@" ;;
                 comments)       require_args 1 $# "Usage: bbb pr comments <id>"; cmd_pr_comments "$1" ;;
                 comment)        require_args 2 $# "Usage: bbb pr comment <id> <text>"; cmd_pr_comment "$@" ;;
                 inline)         cmd_pr_inline "$@" ;;
@@ -1041,7 +1149,19 @@ main() {
                 *)              usage; exit 1 ;;
             esac
             ;;
-        raw)           require_args 1 $# "Usage: bbb raw <endpoint>"; cmd_raw "$1" ;;
+        pipeline)
+            if [[ $# -lt 1 ]]; then
+                usage
+                exit 1
+            fi
+            local psubcmd="$1"
+            shift
+            case "$psubcmd" in
+                log)  cmd_pipeline_log "$@" ;;
+                *)    usage; exit 1 ;;
+            esac
+            ;;
+        raw)           require_args 1 $# "Usage: bbb raw [--text] <endpoint>"; cmd_raw "$@" ;;
         raw-post)      require_args 2 $# "Usage: bbb raw-post <endpoint> <json>"; cmd_raw_post "$1" "$2" ;;
         install-agent) cmd_install_agent "$@" ;;
         help)          usage ;;
