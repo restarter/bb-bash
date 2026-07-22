@@ -683,6 +683,14 @@ pipelines_for_pr() {
                 # A tag can share a name with a branch — ref_type disambiguates.
                 (.target.ref_name == $branch and (.target.ref_type // "BRANCH") != "TAG")
                 or .target.source == $branch
+                # UNVERIFIED against a live response: the exact field name here
+                # is a guess (candidates seen elsewhere: pull_request.id,
+                # pullrequest.id, pull_request_id). The two arms above cover
+                # every case the tests exercise, so a wrong name here is
+                # invisible and this arm may simply be dead. It would matter
+                # for a PR whose source branch was renamed, and for separating
+                # one PR from a declined PR on the same branch.
+                # Settle it with: bbb raw "/pipelines/?pagelen=5"
                 or (.target.pull_request.id // null) == $pr
               ) ]
             | sort_by(.created_on) | reverse }'
