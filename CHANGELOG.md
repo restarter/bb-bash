@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `pr checks` now finds **PR-triggered** pipelines. It used to pass `target.ref_name=<branch>` to `/pipelines/`, which is not a valid filter for that endpoint (it takes BBQL via `q=`) and could never match a PR pipeline anyway — PR-triggered runs carry `target.source` and leave `target.ref_name` null. Pipelines are now fetched unfiltered (newest first) and matched client-side against both target shapes. (bb-bash-48a)
+- `raw` no longer swallows plain-text responses. It piped every body through `jq '.'`; a non-JSON body (a pipeline step log) made jq fail and, under `pipefail`, left stdout empty. Use `bbb raw --text <endpoint>` for text endpoints. (bb-bash-48a)
+
+### Added
+- `bbb pr logs <id> [--step=N]` — print the log of the newest pipeline for a PR's source branch. Defaults to the first failed step, falling back to the last. (bb-bash-48a)
+- `bbb pipeline log <build#> [--step=N]` — the same, addressed by build number. (bb-bash-48a)
+- `BB_BASH_PIPELINE_SCAN` — how many recent pipelines are scanned for a match (default `20`). When the scan window comes back full with no match, `pr checks` now says so instead of silently reporting no pipelines. (bb-bash-48a)
+
+### Changed
+- `pr checks` output now shows each pipeline's `selector.type` (`pull-requests` / `branches` / `custom`). (bb-bash-48a)
+- The state normalizer is now a single shared jq prelude across PR statuses, pipelines and pipeline steps; as a side effect a `PAUSED` PR status now renders as `stopped` (previously `paused`). (bb-bash-48a)
+
 ## [0.2.1] - 2026-06-18
 
 ### Added

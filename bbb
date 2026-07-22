@@ -17,6 +17,7 @@
 #   bbb pr open <id>                           - Open PR in default browser
 #   bbb pr diff <id>                           - Full diff
 #   bbb pr checks <id>                         - CI statuses + Bitbucket Pipelines
+#   bbb pr logs <id> [--step=N]                - Pipeline step log for a PR
 #   bbb pr comments <id>                       - List comments
 #   bbb pr comment <id> <text>                 - Add general comment
 #   bbb pr inline [--old] <id> <path> <line> <text>
@@ -29,7 +30,8 @@
 #   bbb pr edit-comment <pr_id> <comment_id> <text>
 #                                                 - Edit a comment
 #   bbb pr delete-comment <pr_id> <comment_id> - Delete a comment
-#   bbb raw <endpoint>                         - Raw API call (GET)
+#   bbb pipeline log <build#> [--step=N]       - Pipeline step log by build number
+#   bbb raw [--text] <endpoint>                - Raw API call (GET; --text skips jq)
 #   bbb raw-post <endpoint> <json>             - Raw API call (POST)
 #   bbb install-agent [--rule] [--skill] [--claude] [--agents]
 #                                                 - Drop AI-agent integration artifacts into $PWD
@@ -1083,6 +1085,7 @@ usage() {
     echo "  bbb pr open <id>                             Open PR in default browser"
     echo "  bbb pr diff <id>                             Full diff"
     echo "  bbb pr checks <id>                           Show CI statuses + Bitbucket Pipelines"
+    echo "  bbb pr logs <id> [--step=N]                  Pipeline step log for a PR"
     echo "  bbb pr comments <id>                         List comments"
     echo "  bbb pr comment <id> <text>                   Add general comment"
     echo "  bbb pr inline [--old] <id> <path> <line> <text>  Inline comment (default new code, --old for deleted)"
@@ -1092,7 +1095,8 @@ usage() {
     echo "  bbb pr reply <pr_id> <comment_id> <text>   Reply to a comment"
     echo "  bbb pr edit-comment <pr_id> <comment_id> <text>  Edit a comment"
     echo "  bbb pr delete-comment <pr_id> <comment_id>   Delete a comment"
-    echo "  bbb raw <endpoint>                           Raw GET  (e.g. /pullrequests)"
+    echo "  bbb pipeline log <build#> [--step=N]         Pipeline step log by build number"
+    echo "  bbb raw [--text] <endpoint>                  Raw GET  (--text skips jq, e.g. for logs)"
     echo "  bbb raw-post <endpoint> <json>               Raw POST"
     echo "  bbb install-agent [--rule] [--skill] [--claude] [--agents] [--dry-run] [--force]"
     echo "                                                  Drop AI-agent integration artifacts into \$PWD"
@@ -1106,6 +1110,7 @@ usage() {
     echo "  BB_BASH_REPO       Repository slug           (optional, auto-detected from git remote)"
     echo "  BB_BASH_REMOTE     Git remote name override  (optional, default: scan for bitbucket.org)"
     echo "  BB_BASH_REF        Git ref for install-agent (optional, default: main)"
+    echo "  BB_BASH_PIPELINE_SCAN  Recent pipelines scanned for a match (default: 20)"
     echo ""
     echo "Copy .env.example to .env and fill in your values."
 }

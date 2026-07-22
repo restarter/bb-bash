@@ -15,7 +15,7 @@ Auto-resolves through symlinks; `.env` lives next to the real script (`~/.local/
 - `read:repository:bitbucket`
 - `read:pullrequest:bitbucket`
 - `write:pullrequest:bitbucket`
-- `read:pipeline:bitbucket` *(optional, for `pr checks` Pipelines)*
+- `read:pipeline:bitbucket` *(optional, for `pr checks` Pipelines and `pr logs` / `pipeline log`)*
 
 ### Common workflows
 
@@ -29,6 +29,8 @@ bbb pr show <id>
 bbb pr diff <id>
 bbb pr comments <id>
 bbb pr checks <id>                       # CI + pipelines status
+bbb pr logs <id>                         # log of the newest pipeline for this PR
+bbb pipeline log <build#>                # log by pipeline build number
 
 # Comment / review
 bbb pr comment <id> "general comment"
@@ -57,7 +59,7 @@ When reviewing a PR:
 
 1. `bbb pr show <id>` — title, author, changed files
 2. `bbb pr diff <id> | head -200` — read the diff
-3. `bbb pr checks <id>` — confirm CI status before approving
+3. `bbb pr checks <id>` — confirm CI status before approving; `bbb pr logs <id>` for a failed pipeline's log
 4. `bbb pr inline <id> <path> <line> "feedback"` — inline review comments
 5. `bbb pr approve <id>` or `bbb pr comment <id> "summary"` to wrap up
 

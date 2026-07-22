@@ -9,11 +9,11 @@ bb-bash is one executable script (`bbb` on disk). Dependencies: `curl`, `jq`. No
 The script is divided into clearly-labeled sections (line numbers shift over time — refer by label):
 
 1. **Usage docstring** — header comment doubles as inline help
-2. **Helpers** — `die`, `resolve_script_dir`, `require_args`, `resolve_workspace_repo`, `batch_action`. `resolve_script_dir` is defined here (not in the top-level guard) so tests can source bbb and exercise it directly; it anchors `.env` discovery to the real script directory by following symlinks portably (no `readlink -f`).
+2. **Helpers** — `die`, `resolve_script_dir`, `require_args`, `require_numeric`, `urlencode`, `resolve_workspace_repo`, `batch_action`, and the `JQ_NORM` jq prelude that normalizes Bitbucket state vocabularies for every renderer. `resolve_script_dir` is defined here (not in the top-level guard) so tests can source bbb and exercise it directly; it anchors `.env` discovery to the real script directory by following symlinks portably (no `readlink -f`).
 3. **API helpers** — `api_get`, `api_post` (both with `--soft`), `api_put`, `api_delete`
-4. **Commands** — `cmd_pr_*`, `cmd_raw*` functions
+4. **Commands** — `cmd_pr_*`, `cmd_pipeline_*`, `cmd_raw*` functions, plus the shared `pipelines_for_pr` / `pipeline_step_log` helpers they build on
 5. **`usage()`** — printed help text
-6. **`main()` router** — `case` dispatch for `pr <subcmd>`, `raw`, `raw-post`
+6. **`main()` router** — `case` dispatch for `pr <subcmd>`, `pipeline <subcmd>`, `raw`, `raw-post`
 7. **Top-level guard** — `[[ "${BASH_SOURCE[0]}" == "${0}" ]]` so the script can be sourced by tests as a library; imperative setup (resolve, BASE_URL, AUTH, main "$@") runs only on direct invocation
 
 ## Auto-detect precedence (authoritative)
@@ -71,7 +71,7 @@ The check `[[ "$url" =~ (^|@|/)bitbucket\.org[:/] ]]` uses anchored regex to rej
 Soft mode is used by:
 
 - Batch commands (`pr approve`, `pr decline`) — one failure shouldn't kill the whole loop
-- Optional endpoints (`pr checks` pipelines) — degrade gracefully when token lacks scope
+- Optional endpoints (`pr checks` pipelines, `pr logs`, `pipeline log`) — degrade gracefully when token lacks scope
 
 Callers under `set -e` (which the script enables at top) MUST use the `if … then … else … fi` form, never bare `||`, when invoking `--soft`:
 

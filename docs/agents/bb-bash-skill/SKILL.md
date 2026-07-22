@@ -40,6 +40,8 @@ bbb pr show <id>                         # title, branches, author, files
 bbb pr diff <id>                         # full unified diff
 bbb pr comments <id>                     # general + inline, with comment IDs
 bbb pr checks <id>                       # CI statuses + Pipelines (graceful-degrade if token lacks read:pipeline)
+bbb pr logs <id> [--step=N]              # newest pipeline's log; first FAILED step by default
+bbb pipeline log <build#> [--step=N]     # same, addressed by build number
 ```
 
 ### Comment
@@ -92,6 +94,7 @@ When the user says "review PR #N" or similar:
 2. Confirm CI is green:
    ```bash
    bbb pr checks <N>
+   bbb pr logs <N>                       # if a pipeline failed — prints the failing step's log
    ```
 3. Leave inline comments on specific lines for concrete issues:
    ```bash
@@ -174,8 +177,8 @@ bbb pr decline 65 67 89                                              # batch clo
   ```
 
 - **Auto-detect**: workspace/repo are inferred from the bitbucket.org remote of the current directory. No env vars needed inside a Bitbucket repo. Override with `BB_BASH_REMOTE=<name>` when there are multiple remotes.
-- **Output**: plain text, no JSON wrapping unless using `bbb raw`. Parse with `jq` only when calling `bbb raw`.
-- **Token scopes**: `read:repository:bitbucket`, `read:pullrequest:bitbucket`, `write:pullrequest:bitbucket`. Optional: `read:pipeline:bitbucket` for `pr checks` to show Pipelines.
+- **Output**: plain text, no JSON wrapping unless using `bbb raw`. Parse with `jq` only when calling `bbb raw`. Endpoints that return plain text rather than JSON (pipeline step logs) need `bbb raw --text` — without it `jq` fails to parse and stdout comes back empty.
+- **Token scopes**: `read:repository:bitbucket`, `read:pullrequest:bitbucket`, `write:pullrequest:bitbucket`. Optional: `read:pipeline:bitbucket` for `pr checks` Pipelines and for `pr logs` / `pipeline log`.
 
 ## When NOT to use this skill
 

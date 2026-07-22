@@ -26,7 +26,7 @@ Go to https://id.atlassian.com/manage-profile/security/api-tokens. Required scop
 - `read:repository:bitbucket`
 - `read:pullrequest:bitbucket`
 - `write:pullrequest:bitbucket`
-- `read:pipeline:bitbucket` — *optional, only for `bbb pr checks` to show Bitbucket Pipelines; gracefully omitted otherwise*
+- `read:pipeline:bitbucket` — *optional, for `bbb pr checks` Pipelines output and for `bbb pr logs` / `bbb pipeline log`; gracefully omitted otherwise*
 
 ### 2. Configure credentials
 
@@ -95,6 +95,8 @@ bbb pr list --state=merged --author=alice
 bbb pr show 42
 bbb pr diff 42
 bbb pr checks 42                         # CI + pipelines status
+bbb pr logs 42                           # log of the newest pipeline for this PR
+bbb pipeline log 137                     # log by pipeline build number
 bbb pr comments 42                       # general + inline comments
 
 bbb pr comment 42 "general comment"
@@ -114,6 +116,7 @@ bbb pr update 42 --title="New title"
 bbb pr open 42                           # opens in browser
 
 bbb raw "/pullrequests"
+bbb raw --text "/pipelines/%7B...%7D/steps/%7B...%7D/log"   # plain text, no jq
 bbb raw-post "/pullrequests/42/comments" '{"content":{"raw":"test"}}'
 ```
 

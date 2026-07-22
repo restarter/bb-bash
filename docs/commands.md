@@ -59,9 +59,31 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 **Synopsis:** `bbb pr checks <id>`
 
-**Description:** Show PR-level statuses (external CI integrations) + Bitbucket Pipelines for the source branch. State vocabularies are normalized: `pass` / `running` / `fail` / `stopped`.
+**Description:** Show PR-level statuses (external CI integrations) + Bitbucket Pipelines for the source branch. State vocabularies are normalized: `pass` / `running` / `fail` / `stopped`. Each pipeline line also shows its `selector.type` (`pull-requests` / `branches` / `custom`).
+
+Pipelines are matched **client-side**: Bitbucket's `/pipelines/` endpoint has no usable branch filter (it takes BBQL via `q=`), and PR-triggered pipelines carry `target.source` with a null `target.ref_name`, so `bbb` fetches the recent window (`BB_BASH_PIPELINE_SCAN`, default 20) and matches both target shapes. When that window comes back full with no match, the output says so instead of silently reporting no pipelines.
 
 **Required scopes:** `read:pullrequest:bitbucket` (always); `read:pipeline:bitbucket` (for Pipelines portion — degrades gracefully if absent)
+
+---
+
+## pr logs
+
+**Synopsis:** `bbb pr logs <id> [--step=N]`
+
+**Description:** Print the log of the newest pipeline for the PR's source branch. Defaults to the first `FAILED` step, falling back to the last step; `--step=N` selects the Nth step (1-based).
+
+**Required scopes:** `read:pullrequest:bitbucket`, `read:pipeline:bitbucket`
+
+---
+
+## pipeline log
+
+**Synopsis:** `bbb pipeline log <build#> [--step=N]`
+
+**Description:** Same as `pr logs`, addressed by pipeline build number instead of PR. Resolves the build number to a pipeline UUID (direct lookup, falling back to a scan of the recent window).
+
+**Required scopes:** `read:pipeline:bitbucket`
 
 ---
 
@@ -191,10 +213,10 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 ## raw / raw-post
 
 **Synopsis:**
-- `bbb raw <endpoint>` — GET request
+- `bbb raw [--text] <endpoint>` — GET request
 - `bbb raw-post <endpoint> <json>` — POST request
 
-**Description:** Direct API access for endpoints not wrapped. Endpoint is relative to `/repositories/{ws}/{repo}`. Output is raw JSON (pretty-printed via `jq`).
+**Description:** Direct API access for endpoints not wrapped. Endpoint is relative to `/repositories/{ws}/{repo}`. Output is raw JSON (pretty-printed via `jq`). Pass `--text` for endpoints that return plain text rather than JSON — pipeline step logs, for instance — where `jq` would fail to parse and, under `pipefail`, leave stdout empty.
 
 **Example:** `bbb raw "/branch-restrictions"`
 
@@ -248,6 +270,7 @@ bbb install-agent --rule --force                 # overwrite existing rule
 - `BB_BASH_REMOTE=<name>` — force a specific git remote for workspace/repo resolution
 - `BB_BASH_WORKSPACE=<ws>` + `BB_BASH_REPO=<repo>` — bypass git remote auto-detect entirely
 - `BB_BASH_BATCH_DELAY=<seconds>` — delay between batch API calls (default `0.3`; set `0` in tests)
+- `BB_BASH_PIPELINE_SCAN=<n>` — how many recent pipelines `pr checks` / `pr logs` / `pipeline log` scan for a match (default `20`)
 - `BB_BASH_EMAIL` / `BB_BASH_TOKEN` — credentials (loaded from `.env` next to script by default)
 - `BB_BASH_USER_ONLY=1` — installer-only; force `~/.local/bin` (see [`../scripts/install.sh`](../scripts/install.sh))
 - `BB_BASH_FORCE=1` — installer-only; override non-symlink overwrite refusal (see [`../scripts/install.sh`](../scripts/install.sh))

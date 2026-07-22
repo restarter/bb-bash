@@ -74,7 +74,7 @@ Single-file bash script (`bbb`), divided into clearly-labeled sections. See [doc
 1. Usage docstring (header comment)
 2. Helpers (`die`, `resolve_script_dir`, `require_args`, `resolve_workspace_repo`, `batch_action`)
 3. API helpers (`api_get`, `api_post` with `--soft`; `api_put`, `api_delete`)
-4. Commands (`cmd_pr_*`, `cmd_raw*`)
+4. Commands (`cmd_pr_*`, `cmd_pipeline_*`, `cmd_raw*`)
 5. `usage()`
 6. `main()` router
 7. Top-level guard (`[[ "${BASH_SOURCE[0]}" == "${0}" ]]`) so imperative setup runs only on direct invocation
