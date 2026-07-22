@@ -169,13 +169,44 @@ urlencode() {
 # Shared jq prelude: normalizes Bitbucket's several state vocabularies down to
 # pass / running / fail / stopped. Prepend to any filter that renders a state,
 # so PR statuses, pipelines and pipeline steps cannot drift apart.
+#
+# Use it as: jq -r "$JQ_NORM"'<filter>'  — the prelude is DOUBLE-quoted so it
+# expands, the filter stays SINGLE-quoted so jq's own $vars and \(...) survive
+# bash. Collapsing the two into one double-quoted string breaks every filter
+# that uses --arg. Keep them adjacent: a stray space makes jq read the filter
+# as a filename.
+#
+# norm() is total on purpose: a step object can arrive with no .state at all,
+# and `null | ascii_upcase` is a hard jq error that would abort the caller.
+#
+# pstate is the pipeline/step accessor — the `.state.result.name // .state.name`
+# shape appeared in three renderers before it was folded in here.
+# SC2016: $st is a jq variable, not a shell one — single quotes are required
+# here so bash leaves it for jq.
+# shellcheck disable=SC2016
 JQ_NORM='def norm(s):
-  {SUCCESSFUL: "pass", SUCCESS: "pass", PASSED: "pass",
-   INPROGRESS: "running", IN_PROGRESS: "running", PENDING: "running", RUNNING: "running",
-   FAILED: "fail", FAILURE: "fail", ERROR: "fail",
-   STOPPED: "stopped", HALTED: "stopped", CANCELLED: "stopped",
-   PAUSED: "stopped"}
-  [s | ascii_upcase] // (s | ascii_downcase);'
+  (s // "unknown") as $st
+  | {SUCCESSFUL: "pass", SUCCESS: "pass", PASSED: "pass",
+     INPROGRESS: "running", IN_PROGRESS: "running", PENDING: "running", RUNNING: "running",
+     FAILED: "fail", FAILURE: "fail", ERROR: "fail",
+     STOPPED: "stopped", HALTED: "stopped", CANCELLED: "stopped",
+     PAUSED: "stopped"}
+    [$st | ascii_upcase] // ($st | ascii_downcase);
+def pstate: norm(.state.result.name // .state.name);'
+
+# require_pipeline_scan — validate BB_BASH_PIPELINE_SCAN and publish PIPELINE_SCAN.
+#
+# MUST be called as a plain statement, never inside $( ) or an `if` condition:
+# die() from inside a command substitution kills only the subshell, so a check
+# that has to be fatal must run in the caller's own shell first. Bitbucket caps
+# pagelen at 100, so a larger window is silently truncated — clamp instead of
+# pretending it works.
+require_pipeline_scan() {
+    PIPELINE_SCAN="${BB_BASH_PIPELINE_SCAN:-20}"
+    require_numeric "BB_BASH_PIPELINE_SCAN" "$PIPELINE_SCAN"
+    [[ "$PIPELINE_SCAN" -ge 1 && "$PIPELINE_SCAN" -le 100 ]] \
+        || die "BB_BASH_PIPELINE_SCAN must be 1-100 (Bitbucket's pagelen cap), got: $PIPELINE_SCAN"
+}
 
 # api_get [--soft] <endpoint>
 # Default: dies on HTTP >=400.
@@ -189,7 +220,17 @@ api_get() {
     local endpoint="$1"
     local url="${BASE_URL}${endpoint}"
     local response http_code body
-    response=$(curl -s -L -w "\n%{http_code}" -u "${AUTH}" "$url")
+    # Check curl's own exit status. Without it a DNS/TLS/connection failure
+    # (exit 6/7/35) yields an empty body AND an empty http_code, and
+    # [[ "" -ge 400 ]] is FALSE — so the transport error would sail through
+    # this function as a successful empty response.
+    #
+    # -L is required: the pipeline step-log endpoint 302s to signed storage.
+    # NEVER add --location-trusted — curl deliberately strips the -u
+    # credentials when the redirect changes origin, and the signed URL needs
+    # no auth. Trusting the redirect would leak the token to the storage host.
+    response=$(curl -s -L -w "\n%{http_code}" -u "${AUTH}" "$url") \
+        || die "network error contacting Bitbucket (curl failed): $url"
     http_code=$(echo "$response" | tail -n1)
     body=$(echo "$response" | sed '$d')
     if [[ "$http_code" -ge 400 ]]; then
@@ -219,11 +260,13 @@ api_post() {
     local data="$2"
     local url="${BASE_URL}${endpoint}"
     local response http_code body
+    # See api_get: curl's exit status must be checked, an empty http_code
+    # passes the >=400 gate.
     response=$(curl -s -w "\n%{http_code}" -u "${AUTH}" \
         -X POST \
         -H "Content-Type: application/json" \
         -d "$data" \
-        "$url")
+        "$url") || die "network error contacting Bitbucket (curl failed): $url"
     http_code=$(echo "$response" | tail -n1)
     body=$(echo "$response" | sed '$d')
     if [[ "$http_code" -ge 400 ]]; then
@@ -247,7 +290,7 @@ api_put() {
         -X PUT \
         -H "Content-Type: application/json" \
         -d "$data" \
-        "$url")
+        "$url") || die "network error contacting Bitbucket (curl failed): $url"
     http_code=$(echo "$response" | tail -n1)
     body=$(echo "$response" | sed '$d')
     if [[ "$http_code" -ge 400 ]]; then
@@ -263,7 +306,7 @@ api_delete() {
     local url="${BASE_URL}${endpoint}"
     curl -s -o /dev/null -w "%{http_code}" -u "${AUTH}" \
         -X DELETE \
-        "$url"
+        "$url" || die "network error contacting Bitbucket (curl failed): $url"
 }
 
 # batch_action <label> <endpoint-template> <jq-success-msg> "$@"
@@ -470,7 +513,7 @@ cmd_pr_list() {
         # Full URL-encode via jq @uri (handles &, +, #, %, ?, unicode, etc.
         # — not just space and quote as the previous two-substitution hack did)
         local q_encoded
-        q_encoded=$(jq -rn --arg s "$q" '$s | @uri')
+        q_encoded=$(urlencode "$q")
         query="${query}&q=${q_encoded}"
     fi
 
@@ -599,33 +642,50 @@ cmd_pr_diff() {
 }
 
 # pipelines_for_pr <pr_id> <source_branch>
-# Bitbucket's /pipelines/ has no usable server-side branch filter: it takes
-# BBQL via q= (a bare target.ref_name= param is silently ignored), and
-# PR-triggered pipelines carry target.source with target.ref_name = null —
-# only branch-triggered ones set target.ref_name. So fetch the recent window
-# and match client-side against BOTH target shapes.
+# PR-triggered pipelines carry target.source with target.ref_name = null; only
+# branch-triggered ones set target.ref_name. So NO ref_name filter — server-side
+# or BBQL — can ever match a PR pipeline. Fetch the recent window and match both
+# target shapes client-side.
 #
-# Prints ONE JSON object: { scanned, limit, matches } — matches newest first.
+# (The earlier code passed a bare `target.ref_name=<branch>` query param and got
+# count=0 back. Whether the endpoint honoured that param or discarded it is not
+# established — and does not matter: the null ref_name alone makes ref_name
+# filtering unusable here. Don't restate the stronger claim without evidence.)
+#
+# Requires PIPELINE_SCAN — call require_pipeline_scan in the CALLER first. This
+# function is only ever invoked via command substitution, so a die() in here
+# would kill just the subshell and the caller would misreport the cause.
+#
+# Prints ONE JSON object: { scanned, limit, matches }, matches newest first —
+# sorted client-side rather than trusting the endpoint's sort= param, since the
+# whole premise here is that this endpoint's query handling is not to be assumed.
 # Returns 1 when the pipelines endpoint is unavailable (e.g. missing scope).
 #
-# The scan counters ride inside the JSON deliberately. Callers invoke this via
-# command substitution, which runs a subshell — shell globals set here would
-# NOT reach the caller, so "scan window too small" (which looks exactly like
-# the bug this function fixes) could never be reported.
+# The scan counters ride inside the JSON deliberately: callers use command
+# substitution (a subshell), so shell globals set here would not reach them and
+# "scan window too small" — which looks exactly like the bug this fixes — could
+# never be reported.
 pipelines_for_pr() {
-    local pr_id="$1" branch="$2" body scan
-    scan="${BB_BASH_PIPELINE_SCAN:-20}"
-    require_numeric "BB_BASH_PIPELINE_SCAN" "$scan"
-    body=$(api_get --soft "/pipelines/?sort=-created_on&pagelen=${scan}") || return 1
-    echo "$body" | jq --arg branch "$branch" --arg pr "$pr_id" --argjson scan "$scan" '
+    local branch="$2" body
+    local scan="${PIPELINE_SCAN:?internal error: require_pipeline_scan was not called}"
+    # Strip leading zeros: require_numeric accepts "007", but JSON forbids a
+    # leading zero, so --argjson would make jq choke — and comparing "007"
+    # against tostring(7) as strings would silently never match.
+    local pr_id=$((10#$1))
+    if ! body=$(api_get --soft "/pipelines/?sort=-created_on&pagelen=${scan}"); then
+        return 1
+    fi
+    echo "$body" | jq --arg branch "$branch" --argjson pr "$pr_id" --argjson scan "$scan" '
         { scanned: (.values | length),
           limit:   $scan,
           matches: [ .values[]?
             | select(
-                .target.ref_name == $branch
+                # A tag can share a name with a branch — ref_type disambiguates.
+                (.target.ref_name == $branch and (.target.ref_type // "BRANCH") != "TAG")
                 or .target.source == $branch
-                or ((.target.pull_request.id // empty) | tostring) == $pr
-              ) ] }'
+                or (.target.pull_request.id // null) == $pr
+              ) ]
+            | sort_by(.created_on) | reverse }'
 }
 
 # pr checks <id> — show PR statuses + Bitbucket Pipelines for source branch
@@ -633,6 +693,8 @@ cmd_pr_checks() {
     require_args 1 $# "Usage: bbb pr checks <id>"
     local pr_id="$1"
     require_numeric "PR id" "$pr_id"
+    # Must run here, in this shell — see require_pipeline_scan.
+    require_pipeline_scan
 
     # Fetch PR to get source branch name
     local pr branch
@@ -674,22 +736,29 @@ cmd_pr_checks() {
         else
             echo "$pipes" | jq -r "$JQ_NORM"'
                 .matches[]
-                | "  #\(.build_number) [\(norm(.state.result.name // .state.name))] \(.created_on[:16]) — \(.target.commit.hash[:7]) (\(.target.selector.type // "?")) by \(.creator.display_name // "?")"'
+                | "  #\(.build_number) [\(pstate)] \(.created_on[:16]) — \(.target.commit.hash[:7]) (\(.target.selector.type // "?")) by \(.creator.display_name // "?")"'
         fi
     else
-        echo "  (pipelines unavailable — token may lack read:pipeline scope)"
+        # Don't assert a cause we haven't established: this also fires on a 5xx,
+        # a malformed body, or anything else that makes the fetch fail.
+        echo "  (pipelines unavailable — see any error above; the token may lack read:pipeline scope)"
     fi
 }
 
 # pipeline_step_log <pipeline_uuid> <label> [step_number]
-# Print one step's log. Default step: the first FAILED one, else the last.
+# Print one step's log. Default step: the first failed one, else the last.
 # The log endpoint returns plain text (302 -> signed storage), so its body must
 # NOT go through jq — that is what makes `bbb raw .../log` come back empty.
+#
+# `label` is a presentation string threaded into a fetch helper because bash 3.2
+# can't return a struct. It's the seam where a future --json/--quiet will hurt.
 pipeline_step_log() {
     local uuid="$1" label="$2" step_n="${3:-}"
     local uuid_enc steps step_json step_uuid step_name step_state
     uuid_enc=$(urlencode "$uuid")
-    steps=$(api_get "/pipelines/${uuid_enc}/steps/")
+    # pagelen: the steps endpoint defaults to 10, which would silently make the
+    # "last step" the tenth on a longer pipeline.
+    steps=$(api_get "/pipelines/${uuid_enc}/steps/?pagelen=100")
 
     if [[ -n "$step_n" ]]; then
         require_numeric "--step" "$step_n"
@@ -700,16 +769,28 @@ pipeline_step_log() {
         step_json=$(echo "$steps" | jq --argjson n "$step_n" '.values[$n - 1] // empty')
         [[ -n "$step_json" ]] || die "Step ${step_n} not found in ${label}"
     else
-        step_json=$(echo "$steps" | jq '
-            [ .values[]? | select((.state.result.name // "") == "FAILED") ][0]
+        # Select via norm(), not a literal "FAILED": Bitbucket also emits ERROR
+        # (and FAILURE) for a failed step, and pr checks renders all three as
+        # [fail]. Matching only "FAILED" skipped an ERROR step and handed back a
+        # passing step's log — the exact drift JQ_NORM exists to prevent.
+        step_json=$(echo "$steps" | jq "$JQ_NORM"'
+            [ .values[]? | select(pstate == "fail") ][0]
             // (.values // [])[-1]
             // empty')
         [[ -n "$step_json" ]] || die "${label} has no steps"
     fi
 
-    step_uuid=$(echo "$step_json" | jq -r '.uuid')
+    step_uuid=$(echo "$step_json" | jq -r '.uuid // empty')
+    [[ -n "$step_uuid" && "$step_uuid" != "null" ]] \
+        || die "${label}: step has no uuid — cannot fetch its log"
     step_name=$(echo "$step_json" | jq -r '.name // "(unnamed)"')
-    step_state=$(echo "$step_json" | jq -r "$JQ_NORM"' norm(.state.result.name // .state.name)')
+    step_state=$(echo "$step_json" | jq -r "$JQ_NORM"' pstate')
+
+    # A step that hasn't finished has no log yet; the endpoint 404s. Say so
+    # instead of printing a header and then a raw API error under it.
+    if [[ "$step_state" == "running" ]]; then
+        die "${label} step \"${step_name}\" is still running — no log yet"
+    fi
 
     echo "--- ${label} step \"${step_name}\" [${step_state}] ---"
     api_get "/pipelines/${uuid_enc}/steps/$(urlencode "$step_uuid")/log"
@@ -722,9 +803,12 @@ cmd_pipeline_log() {
     shift
     require_numeric "build number" "$build"
 
+    require_pipeline_scan
+
     local step_n=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --step=)  die "--step= requires a value, e.g. --step=2" ;;
             --step=*) step_n="${1#--step=}" ;;
             *)        die "Unknown flag: $1" ;;
         esac
@@ -733,16 +817,25 @@ cmd_pipeline_log() {
 
     # /pipelines/{pipeline_uuid} is what the API documents; build numbers work
     # in practice but are not guaranteed, so fall back to scanning the list.
+    # Either way VERIFY the build number came back as asked — this endpoint's
+    # handling of input it doesn't understand is exactly what the pr checks bug
+    # was about, so its answer is checked rather than trusted.
     local uuid="" body
     if body=$(api_get --soft "/pipelines/${build}"); then
-        uuid=$(echo "$body" | jq -r '.uuid // empty')
+        uuid=$(echo "$body" | jq -r --argjson b "$build" \
+            'select(.build_number == $b) | .uuid // empty') \
+            || die "unexpected (non-JSON) response from /pipelines/${build}"
     fi
     if [[ -z "$uuid" ]]; then
-        body=$(api_get "/pipelines/?sort=-created_on&pagelen=${BB_BASH_PIPELINE_SCAN:-20}")
+        # --soft here too, so a missing read:pipeline scope reports the same way
+        # it does in pr checks and pr logs rather than as a bare HTTP 403.
+        if ! body=$(api_get --soft "/pipelines/?sort=-created_on&pagelen=${PIPELINE_SCAN}"); then
+            die "Pipelines unavailable — the token may lack read:pipeline scope"
+        fi
         uuid=$(echo "$body" | jq -r --argjson b "$build" '
             [ .values[]? | select(.build_number == $b) ][0].uuid // empty')
     fi
-    [[ -n "$uuid" ]] || die "Pipeline #${build} not found (scanned the ${BB_BASH_PIPELINE_SCAN:-20} most recent — raise BB_BASH_PIPELINE_SCAN)"
+    [[ -n "$uuid" ]] || die "Pipeline #${build} not found (scanned the ${PIPELINE_SCAN} most recent — raise BB_BASH_PIPELINE_SCAN, max 100)"
 
     pipeline_step_log "$uuid" "pipeline #${build}" "$step_n"
 }
@@ -754,23 +847,35 @@ cmd_pr_logs() {
     shift
     require_numeric "PR id" "$pr_id"
 
+    require_pipeline_scan
+
     local step_n=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --step=)  die "--step= requires a value, e.g. --step=2" ;;
             --step=*) step_n="${1#--step=}" ;;
             *)        die "Unknown flag: $1" ;;
         esac
         shift
     done
 
-    local pr branch pipes uuid build
+    local pr branch pipes uuid build scan_hint
     pr=$(api_get "/pullrequests/${pr_id}")
-    branch=$(echo "$pr" | jq -r '.source.branch.name')
-    pipes=$(pipelines_for_pr "$pr_id" "$branch") \
-        || die "Pipelines unavailable — token may lack read:pipeline scope"
+    branch=$(echo "$pr" | jq -r '.source.branch.name // "(unknown)"')
+    if ! pipes=$(pipelines_for_pr "$pr_id" "$branch"); then
+        die "Pipelines unavailable — see any error above; the token may lack read:pipeline scope"
+    fi
     uuid=$(echo "$pipes" | jq -r '.matches[0].uuid // empty')
-    build=$(echo "$pipes" | jq -r '.matches[0].build_number // empty')
-    [[ -n "$uuid" ]] || die "No pipelines found for PR ${pr_id} (branch: ${branch})"
+    build=$(echo "$pipes" | jq -r '.matches[0].build_number // "?"')
+    if [[ -z "$uuid" ]]; then
+        # Same scan-window caveat pr checks reports — without it this reads as
+        # "the PR has no pipelines" when the window was simply too small.
+        scan_hint=$(echo "$pipes" | jq -r '
+            if .scanned > 0 and .scanned >= .limit
+            then " (scanned the \(.limit) most recent pipelines — raise BB_BASH_PIPELINE_SCAN, max 100)"
+            else "" end')
+        die "No pipelines found for PR ${pr_id} (branch: ${branch})${scan_hint}"
+    fi
 
     pipeline_step_log "$uuid" "PR ${pr_id} pipeline #${build}" "$step_n"
 }
@@ -921,6 +1026,11 @@ cmd_raw() {
     fi
     local endpoint="${1:-}"
     [[ -n "$endpoint" ]] || die "Usage: bbb raw [--text] <endpoint>"
+    shift
+    # Reject trailing args rather than dropping them: `bbb raw /foo --text`
+    # would otherwise silently take the jq path and produce the empty stdout
+    # that --text exists to fix.
+    [[ $# -eq 0 ]] || die "Unexpected argument: $1 (--text must come before the endpoint)"
     if [[ $text -eq 1 ]]; then
         # Plain-text passthrough. Some endpoints (pipeline step logs, diffs)
         # return text; forcing them through jq yields a parse error and, under
