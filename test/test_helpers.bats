@@ -93,6 +93,48 @@ teardown() {
     contains "$output" '*scope missing*'
 }
 
+@test "api_get: a curl transport failure is fatal, not an empty success" {
+    # curl exits 6/7/35 and prints nothing, so http_code is empty — and
+    # [[ "" -ge 400 ]] is FALSE. Without an explicit exit-status check the
+    # transport error would pass through as a successful empty response.
+    stub_curl_fail 6
+    run api_get "/pullrequests/42"
+    [ "$status" -ne 0 ]
+    contains "$output" '*network error*'
+}
+
+@test "api_get --soft: a curl transport failure is fatal even in soft mode" {
+    # --soft downgrades HTTP errors, not transport errors: there is no body to
+    # degrade to, and the caller would report "no results" for a dead network.
+    stub_curl_fail 7
+    run api_get --soft "/pipelines/?pagelen=20"
+    [ "$status" -ne 0 ]
+    contains "$output" '*network error*'
+}
+
+@test "api_post: a curl transport failure is fatal" {
+    stub_curl_fail 35
+    run api_post "/pullrequests/42/comments" '{"content":{"raw":"x"}}'
+    [ "$status" -ne 0 ]
+    contains "$output" '*network error*'
+}
+
+@test "api_put: a curl transport failure is fatal" {
+    stub_curl_fail 6
+    run api_put "/pullrequests/42/comments/1" '{"content":{"raw":"x"}}'
+    [ "$status" -ne 0 ]
+    contains "$output" '*network error*'
+}
+
+@test "api_delete: a curl transport failure is fatal, not an empty status code" {
+    # Callers do status=$(api_delete ...); an unguarded transport failure would
+    # make that the empty string and print "Failed to delete (HTTP )".
+    stub_curl_fail 7
+    run api_delete "/pullrequests/42/comments/1"
+    [ "$status" -ne 0 ]
+    contains "$output" '*network error*'
+}
+
 @test "batch_action: success format" {
     stub_curl '{"state":"DECLINED"}' 200
     run batch_action "declined" "/pullrequests/{id}/decline" '.state' 42

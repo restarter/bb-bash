@@ -199,13 +199,18 @@ def pstate: norm(.state.result.name // .state.name);'
 # MUST be called as a plain statement, never inside $( ) or an `if` condition:
 # die() from inside a command substitution kills only the subshell, so a check
 # that has to be fatal must run in the caller's own shell first. Bitbucket caps
-# pagelen at 100, so a larger window is silently truncated — clamp instead of
-# pretending it works.
+# pagelen at 100, so a larger window would be truncated server-side — reject it
+# rather than pretend it works.
 require_pipeline_scan() {
     PIPELINE_SCAN="${BB_BASH_PIPELINE_SCAN:-20}"
     require_numeric "BB_BASH_PIPELINE_SCAN" "$PIPELINE_SCAN"
-    [[ "$PIPELINE_SCAN" -ge 1 && "$PIPELINE_SCAN" -le 100 ]] \
+    # Strip leading zeros before the numeric comparison: [[ n -ge 1 ]] treats a
+    # 0-prefixed operand as octal (0144 -> 100, so it would slip past the cap;
+    # 08/09 raise a bash 'value too great for base' error instead of our die).
+    local n=$((10#$PIPELINE_SCAN))
+    [[ "$n" -ge 1 && "$n" -le 100 ]] \
         || die "BB_BASH_PIPELINE_SCAN must be 1-100 (Bitbucket's pagelen cap), got: $PIPELINE_SCAN"
+    PIPELINE_SCAN="$n"
 }
 
 # api_get [--soft] <endpoint>
@@ -770,9 +775,11 @@ pipeline_step_log() {
 
     if [[ -n "$step_n" ]]; then
         require_numeric "--step" "$step_n"
-        # require_numeric accepts 0, and .values[0 - 1] is .values[-1] — jq's
-        # last element. Without this guard --step=0 silently returns the wrong
-        # step instead of erroring.
+        # 10#: strip leading zeros so [[ -ge ]] and --argjson don't read 08/09
+        # as octal (a bash error) or accept a 0-padded index. require_numeric
+        # accepts 0, and .values[0 - 1] is .values[-1] — jq's last element — so
+        # the >= 1 guard is what stops --step=0 silently picking the wrong step.
+        step_n=$((10#$step_n))
         [[ "$step_n" -ge 1 ]] || die "--step must be 1 or greater, got: $step_n"
         step_json=$(echo "$steps" | jq --argjson n "$step_n" '.values[$n - 1] // empty')
         [[ -n "$step_json" ]] || die "Step ${step_n} not found in ${label}"
@@ -835,10 +842,14 @@ cmd_pipeline_log() {
             || die "unexpected (non-JSON) response from /pipelines/${build}"
     fi
     if [[ -z "$uuid" ]]; then
-        # --soft here too, so a missing read:pipeline scope reports the same way
-        # it does in pr checks and pr logs rather than as a bare HTTP 403.
+        # --soft so we can surface the API's own message rather than a bare
+        # exit. Don't assert a cause we haven't established: a 403 does mean a
+        # missing scope, but a 500/429/malformed body must not be reported as
+        # one — the same hedge the pr checks / pr logs sites use.
         if ! body=$(api_get --soft "/pipelines/?sort=-created_on&pagelen=${PIPELINE_SCAN}"); then
-            die "Pipelines unavailable — the token may lack read:pipeline scope"
+            local msg
+            msg=$(echo "$body" | jq -r '.error.message // empty' 2>/dev/null)
+            die "Pipelines unavailable: ${msg:-the token may lack read:pipeline scope}"
         fi
         uuid=$(echo "$body" | jq -r --argjson b "$build" '
             [ .values[]? | select(.build_number == $b) ][0].uuid // empty')

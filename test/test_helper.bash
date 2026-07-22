@@ -124,6 +124,20 @@ EOF
     chmod +x "$STUB_DIR/curl"
 }
 
+# stub_curl_fail [exit_code] — stub for a TRANSPORT failure: prints nothing and
+# exits non-zero, the way real curl behaves on DNS (6), connect (7) or TLS (35)
+# errors. Distinct from an HTTP error: curl exits 0 for a 4xx/5xx unless -f is
+# given, so stub_curl/stub_curl_seq cannot express this case at all.
+stub_curl_fail() {
+    local code="${1:-6}"
+    cat >"$STUB_DIR/curl" <<EOF
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> "$STUB_DIR/.calls"
+exit $code
+EOF
+    chmod +x "$STUB_DIR/curl"
+}
+
 # stub_git: install a git wrapper that returns canned remote URLs.
 # Usage: stub_git origin=https://bitbucket.org/ws/repo.git bb=git@bitbucket.org:other/x.git
 stub_git() {

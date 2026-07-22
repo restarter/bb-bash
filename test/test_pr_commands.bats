@@ -431,6 +431,53 @@ second line'
     contains "$output" '*requires a value*'
 }
 
+@test "pipeline log: --step=2 selects the second step (1-based)" {
+    # Step 3 is the failing one, so an implementation that ignored --step and
+    # fell back to first-failed would land on {s-3} and fail this test.
+    stub_curl_seq \
+        200 '{"uuid":"{p-1}","build_number":7}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"A","state":{"result":{"name":"SUCCESSFUL"}}},{"uuid":"{s-2}","name":"B","state":{"result":{"name":"SUCCESSFUL"}}},{"uuid":"{s-3}","name":"C","state":{"result":{"name":"FAILED"}}}]}' \
+        200 'second step log'
+    run cmd_pipeline_log 7 --step=2
+    [ "$status" -eq 0 ]
+    contains "$output" '*step "B" \[pass\]*'
+    contains "$(nth_curl_call 3)" '*%7Bs-2%7D*'
+    not_contains "$(nth_curl_call 3)" '*%7Bs-3%7D*'
+}
+
+@test "pr logs: --step=2 selects the second step (1-based)" {
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[{"build_number":7,"uuid":"{p-7}","target":{"source":"feature/x"}}]}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"A","state":{"result":{"name":"SUCCESSFUL"}}},{"uuid":"{s-2}","name":"B","state":{"result":{"name":"FAILED"}}}]}' \
+        200 'second step log'
+    run cmd_pr_logs 42 --step=2
+    [ "$status" -eq 0 ]
+    contains "$output" '*step "B" \[fail\]*'
+    contains "$(nth_curl_call 4)" '*%7Bs-2%7D*'
+}
+
+@test "pipeline log: --step past the end is rejected with a clear message" {
+    stub_curl_seq \
+        200 '{"uuid":"{p-1}","build_number":7}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"A","state":{"result":{"name":"SUCCESSFUL"}}}]}'
+    run cmd_pipeline_log 7 --step=99
+    [ "$status" -ne 0 ]
+    contains "$output" '*Step 99 not found*'
+}
+
+@test "pipeline log: a 500 on the list scan is not reported as a scope problem" {
+    # Direct lookup 404s, fallback scan 500s. The message must surface the
+    # server's error, not assert a missing token scope.
+    stub_curl_seq \
+        404 '{"error":{"message":"not found"}}' \
+        500 '{"error":{"message":"Internal server error"}}'
+    run cmd_pipeline_log 7
+    [ "$status" -ne 0 ]
+    contains "$output" '*Internal server error*'
+    not_contains "$output" '*read:pipeline scope*'
+}
+
 @test "pipeline log: --step=0 is rejected, not silently the last step" {
     stub_curl_seq \
         200 '{"uuid":"{p-1}","build_number":7}' \
@@ -472,6 +519,17 @@ second line'
 
 @test "pr checks: a scan window above Bitbucket's pagelen cap is rejected" {
     export BB_BASH_PIPELINE_SCAN=500
+    stub_curl_seq
+    run cmd_pr_checks 42
+    unset BB_BASH_PIPELINE_SCAN
+    [ "$status" -ne 0 ]
+    contains "$output" '*must be 1-100*'
+}
+
+@test "pr checks: an octal-looking scan window does not slip past the cap" {
+    # 0144 is octal 100 to [[ ]], so a naive check would accept it and then
+    # ship literal pagelen=0144. It must be rejected, not silently truncated.
+    export BB_BASH_PIPELINE_SCAN=0144
     stub_curl_seq
     run cmd_pr_checks 42
     unset BB_BASH_PIPELINE_SCAN
