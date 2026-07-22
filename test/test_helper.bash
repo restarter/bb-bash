@@ -17,7 +17,7 @@ load_bbb() {
     export BB_BASH_EMAIL="test@example.com"
     export BB_BASH_TOKEN="test-token"
     export BB_BASH_BATCH_DELAY="0"
-    unset BB_BASH_REMOTE BB_BASH_WORKSPACE BB_BASH_REPO
+    unset BB_BASH_REMOTE BB_BASH_WORKSPACE BB_BASH_REPO BB_BASH_PIPELINE_SCAN
 
     # shellcheck source=/dev/null
     source "$BB_BASH_SCRIPT"
@@ -179,6 +179,13 @@ nth_curl_call() {
 # exit on false. Bare `[[ ]]` assertions in bats tests silently pass when they
 # should fail. These helpers use `case` (a compound but exit-triggering form)
 # and `return 1` to force proper failure under set -e.
+#
+# GLOB, NOT SUBSTRING. The pattern is a shell glob, so `[` and `]` open a
+# character class: '*[fail]*' means "any one of f/a/i/l", NOT the literal
+# "[fail]". Escape them — '*\[fail\]*' — when matching bracketed output such as
+# the "[pass]" / "[fail]" state markers. This bites asymmetrically: `contains`
+# with an unescaped class fails loudly, but `not_contains` passes silently and
+# the assertion becomes decorative.
 contains() {
     local actual="$1" pattern="$2"
     # SC2254: $pattern intentionally unquoted (we want glob expansion in case).
