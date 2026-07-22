@@ -348,6 +348,14 @@ second line'
     contains "$output" '*scanned log*'
 }
 
+@test "pipeline log: a non-JSON direct-lookup body dies cleanly, no raw jq error" {
+    stub_curl_seq 200 '<html>Internal Server Error</html>'
+    run cmd_pipeline_log 7
+    [ "$status" -ne 0 ]
+    contains "$output" '*unexpected (non-JSON) response*'
+    not_contains "$output" '*jq: parse error*'
+}
+
 @test "pipeline log: picks the first failed step, not merely the last one" {
     # The failing step must NOT be last, or select(fail)[0] and the [-1] fallback
     # return the same element and this test cannot fail.

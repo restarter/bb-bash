@@ -849,8 +849,10 @@ cmd_pipeline_log() {
     # was about, so its answer is checked rather than trusted.
     local uuid="" body
     if body=$(api_get --soft "/pipelines/${build}"); then
+        # 2>/dev/null: on a 200 with a non-JSON body, let our die carry the
+        # message rather than leaking jq's raw parse error above it.
         uuid=$(echo "$body" | jq -r --argjson b "$build" \
-            'select(.build_number == $b) | .uuid // empty') \
+            'select(.build_number == $b) | .uuid // empty' 2>/dev/null) \
             || die "unexpected (non-JSON) response from /pipelines/${build}"
     fi
     if [[ -z "$uuid" ]]; then
@@ -863,8 +865,10 @@ cmd_pipeline_log() {
             msg=$(echo "$body" | jq -r '.error.message // empty' 2>/dev/null)
             die "Pipelines unavailable: ${msg:-the token may lack read:pipeline scope}"
         fi
+        # 2>/dev/null: a non-JSON 200 leaves uuid empty and falls through to the
+        # "not found" die below, without a raw jq parse error on the way.
         uuid=$(echo "$body" | jq -r --argjson b "$build" '
-            [ .values[]? | select(.build_number == $b) ][0].uuid // empty')
+            [ .values[]? | select(.build_number == $b) ][0].uuid // empty' 2>/dev/null)
     fi
     [[ -n "$uuid" ]] || die "Pipeline #${build} not found (scanned the ${PIPELINE_SCAN} most recent — raise BB_BASH_PIPELINE_SCAN, max 100)"
 
