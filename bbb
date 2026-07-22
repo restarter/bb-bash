@@ -157,6 +157,24 @@ require_numeric() {
     [[ "$val" =~ ^[0-9]+$ ]] || die "$name must be numeric, got: $val"
 }
 
+# urlencode <string> — percent-encode a value for use in a URL path or query
+# segment. Pipeline UUIDs arrive brace-wrapped ({...}) and MUST be encoded
+# (%7B...%7D) before being spliced into a path.
+urlencode() {
+    jq -rn --arg s "$1" '$s | @uri'
+}
+
+# Shared jq prelude: normalizes Bitbucket's several state vocabularies down to
+# pass / running / fail / stopped. Prepend to any filter that renders a state,
+# so PR statuses, pipelines and pipeline steps cannot drift apart.
+JQ_NORM='def norm(s):
+  {SUCCESSFUL: "pass", SUCCESS: "pass", PASSED: "pass",
+   INPROGRESS: "running", IN_PROGRESS: "running", PENDING: "running", RUNNING: "running",
+   FAILED: "fail", FAILURE: "fail", ERROR: "fail",
+   STOPPED: "stopped", HALTED: "stopped", CANCELLED: "stopped",
+   PAUSED: "stopped"}
+  [s | ascii_upcase] // (s | ascii_downcase);'
+
 # api_get [--soft] <endpoint>
 # Default: dies on HTTP >=400.
 # --soft: prints body to stdout, returns 1 on HTTP >=400.
@@ -578,6 +596,36 @@ cmd_pr_diff() {
         "${BASE_URL}/pullrequests/${pr_id}/diff"
 }
 
+# pipelines_for_pr <pr_id> <source_branch>
+# Bitbucket's /pipelines/ has no usable server-side branch filter: it takes
+# BBQL via q= (a bare target.ref_name= param is silently ignored), and
+# PR-triggered pipelines carry target.source with target.ref_name = null —
+# only branch-triggered ones set target.ref_name. So fetch the recent window
+# and match client-side against BOTH target shapes.
+#
+# Prints ONE JSON object: { scanned, limit, matches } — matches newest first.
+# Returns 1 when the pipelines endpoint is unavailable (e.g. missing scope).
+#
+# The scan counters ride inside the JSON deliberately. Callers invoke this via
+# command substitution, which runs a subshell — shell globals set here would
+# NOT reach the caller, so "scan window too small" (which looks exactly like
+# the bug this function fixes) could never be reported.
+pipelines_for_pr() {
+    local pr_id="$1" branch="$2" body scan
+    scan="${BB_BASH_PIPELINE_SCAN:-20}"
+    require_numeric "BB_BASH_PIPELINE_SCAN" "$scan"
+    body=$(api_get --soft "/pipelines/?sort=-created_on&pagelen=${scan}") || return 1
+    echo "$body" | jq --arg branch "$branch" --arg pr "$pr_id" --argjson scan "$scan" '
+        { scanned: (.values | length),
+          limit:   $scan,
+          matches: [ .values[]?
+            | select(
+                .target.ref_name == $branch
+                or .target.source == $branch
+                or ((.target.pull_request.id // empty) | tostring) == $pr
+              ) ] }'
+}
+
 # pr checks <id> — show PR statuses + Bitbucket Pipelines for source branch
 cmd_pr_checks() {
     require_args 1 $# "Usage: bbb pr checks <id>"
@@ -598,40 +646,33 @@ cmd_pr_checks() {
     if [[ "$status_count" -eq 0 ]]; then
         echo "  (no external statuses)"
     else
-        echo "$statuses" | jq -r '
-            def norm(s):
-              {SUCCESSFUL: "pass", SUCCESS: "pass", PASSED: "pass",
-               INPROGRESS: "running", IN_PROGRESS: "running", PENDING: "running", RUNNING: "running",
-               FAILED: "fail", FAILURE: "fail", ERROR: "fail",
-               STOPPED: "stopped", HALTED: "stopped", CANCELLED: "stopped"}
-              [s | ascii_upcase] // (s | ascii_downcase);
+        echo "$statuses" | jq -r "$JQ_NORM"'
             .values[] | "  [\(norm(.state))] \(.name // .key) — \(.url // "no url")"'
     fi
 
-    # 2) Bitbucket Pipelines for the source branch
-    # Use api_get --soft so missing read:pipeline scope degrades gracefully.
-    # URL-encode branch name (may contain slashes, e.g. feature/foo)
+    # 2) Bitbucket Pipelines matching the PR's source branch.
+    # Filtering happens client-side — see pipelines_for_pr for why.
     echo ""
     echo "--- Bitbucket Pipelines (branch: $branch) ---"
-    local branch_encoded
-    branch_encoded=$(jq -rn --arg b "$branch" '$b | @uri')
     local pipes
-    if pipes=$(api_get --soft "/pipelines/?target.ref_name=${branch_encoded}&sort=-created_on&pagelen=10"); then
-        local pipe_count
-        pipe_count=$(echo "$pipes" | jq -r '.values | length')
+    if pipes=$(pipelines_for_pr "$pr_id" "$branch"); then
+        local pipe_count scan_hint
+        pipe_count=$(echo "$pipes" | jq -r '.matches | length')
         if [[ "$pipe_count" -eq 0 ]]; then
             echo "  (no pipelines for this branch)"
+            # A full scan window with zero matches is indistinguishable from a
+            # genuine absence unless we say so.
+            scan_hint=$(echo "$pipes" | jq -r '
+                if .scanned > 0 and .scanned >= .limit
+                then "  (scanned the \(.limit) most recent pipelines — raise BB_BASH_PIPELINE_SCAN if this repo is busy)"
+                else empty end')
+            if [[ -n "$scan_hint" ]]; then
+                echo "$scan_hint"
+            fi
         else
-            echo "$pipes" | jq -r '
-                def norm(s):
-                  {SUCCESSFUL: "pass", SUCCESS: "pass", PASSED: "pass",
-                   INPROGRESS: "running", IN_PROGRESS: "running", PENDING: "running", RUNNING: "running",
-                   FAILED: "fail", FAILURE: "fail", ERROR: "fail",
-                   STOPPED: "stopped", HALTED: "stopped", CANCELLED: "stopped",
-                   PAUSED: "stopped"}
-                  [s | ascii_upcase] // (s | ascii_downcase);
-                .values[]
-                | "  #\(.build_number) [\(norm(.state.result.name // .state.name))] \(.created_on[:16]) — \(.target.commit.hash[:7]) by \(.creator.display_name // "?")"'
+            echo "$pipes" | jq -r "$JQ_NORM"'
+                .matches[]
+                | "  #\(.build_number) [\(norm(.state.result.name // .state.name))] \(.created_on[:16]) — \(.target.commit.hash[:7]) (\(.target.selector.type // "?")) by \(.creator.display_name // "?")"'
         fi
     else
         echo "  (pipelines unavailable — token may lack read:pipeline scope)"
