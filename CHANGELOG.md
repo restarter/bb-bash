@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-07-23
+
 ### Fixed
 - `pr checks` now finds **PR-triggered** pipelines. It filtered with `target.ref_name=<branch>`, but PR-triggered runs carry `target.source` and leave `target.ref_name` null, so no `ref_name` filter can ever match one. Pipelines are now fetched without that filter and matched client-side against both target shapes, then sorted locally rather than trusting the endpoint's `sort=` parameter. A tag sharing a branch's name is no longer reported as that branch's build. (bb-bash-48a)
 - A network failure is no longer reported as "no pipelines". `api_get` and friends never checked `curl`'s exit status, and a DNS/TLS/connection error yields an empty `http_code` that slips past the `>= 400` gate — so a transport failure surfaced as a successful empty response. (bb-bash-48a)
