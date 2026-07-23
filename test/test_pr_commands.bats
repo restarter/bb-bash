@@ -262,6 +262,21 @@ teardown() {
     not_contains "$output" '*#8*'
 }
 
+@test "pr checks: matches a PR pipeline by pullrequest.id after a branch rename" {
+    # PR #42's source branch was renamed: the pipeline's target.source is the OLD
+    # name, so only the .target.pullrequest.id arm can match. Uses the real
+    # pipeline_pullrequest_target shape (pullrequest.id, no underscore) verified
+    # live — a regression to pull_request.id makes this pipeline invisible.
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/new-name"}}}' \
+        200 '{"values":[]}' \
+        200 '{"values":[{"build_number":6,"state":{"result":{"name":"SUCCESSFUL"}},"created_on":"2026-07-23T10:00:00+00:00","creator":{"display_name":"D"},"target":{"type":"pipeline_pullrequest_target","source":"feature/old-name","destination":"main","ref_name":null,"commit":{"hash":"abcdef1234567"},"selector":{"type":"pull-requests"},"pullrequest":{"type":"pullrequest","id":42}}}]}'
+    run cmd_pr_checks 42
+    [ "$status" -eq 0 ]
+    contains "$output" '*#6*'
+    contains "$output" '*pull-requests*'
+}
+
 @test "pr checks: hints at the scan window when it comes back full with no match" {
     export BB_BASH_PIPELINE_SCAN=1
     stub_curl_seq \

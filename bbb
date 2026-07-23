@@ -687,17 +687,17 @@ pipelines_for_pr() {
           matches: [ .values[]?
             | select(
                 # A tag can share a name with a branch — ref_type disambiguates.
+                # NOTE: the "TAG" casing here is still unverified (the live check
+                # had only PR pipelines, whose targets carry null ref_type);
+                # the // "BRANCH" fallback keeps it safe until a branch/tag
+                # sample confirms the enum.
                 (.target.ref_name == $branch and (.target.ref_type // "BRANCH") != "TAG")
                 or .target.source == $branch
-                # UNVERIFIED against a live response: the exact field name here
-                # is a guess (candidates seen elsewhere: pull_request.id,
-                # pullrequest.id, pull_request_id). The two arms above cover
-                # every case the tests exercise, so a wrong name here is
-                # invisible and this arm may simply be dead. It would matter
-                # for a PR whose source branch was renamed, and for separating
-                # one PR from a declined PR on the same branch.
-                # Settle it with: bbb raw "/pipelines/?pagelen=5"
-                or (.target.pull_request.id // null) == $pr
+                # PR id: field is .target.pullrequest.id (NO underscore) —
+                # verified live against pipeline_pullrequest_target. Matches a PR
+                # even after its source branch is renamed, and separates a live
+                # PR from a declined one on the same branch that .source cannot.
+                or (.target.pullrequest.id // null) == $pr
               ) ]
             | sort_by(.created_on) | reverse }'
 }
