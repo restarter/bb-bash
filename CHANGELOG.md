@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `pr checks` now finds **PR-triggered** pipelines. It filtered with `target.ref_name=<branch>`, but PR-triggered runs carry `target.source` and leave `target.ref_name` null, so no `ref_name` filter can ever match one. Pipelines are now fetched without that filter and matched client-side against both target shapes, then sorted locally rather than trusting the endpoint's `sort=` parameter. A tag sharing a branch's name is no longer reported as that branch's build. (bb-bash-48a)
+- A network failure is no longer reported as "no pipelines". `api_get` and friends never checked `curl`'s exit status, and a DNS/TLS/connection error yields an empty `http_code` that slips past the `>= 400` gate — so a transport failure surfaced as a successful empty response. (bb-bash-48a)
+- Pipeline step logs no longer abort on a step whose state is missing: the shared state normalizer is now total instead of raising a raw `jq` error. (bb-bash-48a)
+
+### Added
+- `bbb pr logs <id> [--step=N]` — print the log of the newest pipeline for a PR. Defaults to the first failed step (`FAILED`, `FAILURE` or `ERROR`), falling back to the last step when none failed. (bb-bash-48a)
+- `bbb pipeline log <build#> [--step=N]` — the same, addressed by build number. The build number is verified against what the API answers with rather than assumed. (bb-bash-48a)
+- `bbb raw --text <endpoint>` — plain-text passthrough for endpoints that don't return JSON, such as pipeline step logs. Without it the body goes through `jq`, which fails to parse and, under `pipefail`, leaves stdout empty. Plain `bbb raw` is unchanged. (bb-bash-48a)
+- `BB_BASH_PIPELINE_SCAN` — how many recent pipelines are scanned for a match (default `20`, max `100`, which is Bitbucket's `pagelen` cap). When the window comes back full with no match, `pr checks` and `pr logs` say so instead of silently reporting no pipelines. (bb-bash-48a)
+
+### Changed
+- `pr checks` output now shows each pipeline's `selector.type` (`pull-requests` / `branches` / `custom`). (bb-bash-48a)
+- The state normalizer is now a single shared jq prelude across PR statuses, pipelines and pipeline steps. As a side effect a `PAUSED` PR status would render as `stopped` rather than `paused` — no user-visible effect in practice, since Bitbucket's build-status API only emits `INPROGRESS`, `STOPPED`, `SUCCESSFUL` and `FAILED`. (bb-bash-48a)
+
 ## [0.2.1] - 2026-06-18
 
 ### Added

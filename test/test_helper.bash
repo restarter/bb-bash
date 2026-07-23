@@ -17,7 +17,7 @@ load_bbb() {
     export BB_BASH_EMAIL="test@example.com"
     export BB_BASH_TOKEN="test-token"
     export BB_BASH_BATCH_DELAY="0"
-    unset BB_BASH_REMOTE BB_BASH_WORKSPACE BB_BASH_REPO
+    unset BB_BASH_REMOTE BB_BASH_WORKSPACE BB_BASH_REPO BB_BASH_PIPELINE_SCAN
 
     # shellcheck source=/dev/null
     source "$BB_BASH_SCRIPT"
@@ -124,6 +124,20 @@ EOF
     chmod +x "$STUB_DIR/curl"
 }
 
+# stub_curl_fail [exit_code] — stub for a TRANSPORT failure: prints nothing and
+# exits non-zero, the way real curl behaves on DNS (6), connect (7) or TLS (35)
+# errors. Distinct from an HTTP error: curl exits 0 for a 4xx/5xx unless -f is
+# given, so stub_curl/stub_curl_seq cannot express this case at all.
+stub_curl_fail() {
+    local code="${1:-6}"
+    cat >"$STUB_DIR/curl" <<EOF
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> "$STUB_DIR/.calls"
+exit $code
+EOF
+    chmod +x "$STUB_DIR/curl"
+}
+
 # stub_git: install a git wrapper that returns canned remote URLs.
 # Usage: stub_git origin=https://bitbucket.org/ws/repo.git bb=git@bitbucket.org:other/x.git
 stub_git() {
@@ -179,6 +193,13 @@ nth_curl_call() {
 # exit on false. Bare `[[ ]]` assertions in bats tests silently pass when they
 # should fail. These helpers use `case` (a compound but exit-triggering form)
 # and `return 1` to force proper failure under set -e.
+#
+# GLOB, NOT SUBSTRING. The pattern is a shell glob, so `[` and `]` open a
+# character class: '*[fail]*' means "any one of f/a/i/l", NOT the literal
+# "[fail]". Escape them — '*\[fail\]*' — when matching bracketed output such as
+# the "[pass]" / "[fail]" state markers. This bites asymmetrically: `contains`
+# with an unescaped class fails loudly, but `not_contains` passes silently and
+# the assertion becomes decorative.
 contains() {
     local actual="$1" pattern="$2"
     # SC2254: $pattern intentionally unquoted (we want glob expansion in case).

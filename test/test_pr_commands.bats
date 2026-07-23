@@ -213,16 +213,66 @@ teardown() {
     contains "$output" '*pipelines unavailable*'
 }
 
-@test "pr checks: URL-encodes branch with slashes" {
+@test "pr checks: pipelines query carries no ref_name filter" {
     stub_curl_seq \
         200 '{"source":{"branch":{"name":"feature/x"}}}' \
         200 '{"values":[]}' \
         200 '{"values":[]}'
     run cmd_pr_checks 42
     [ "$status" -eq 0 ]
-    # Pipelines call (3rd) must URL-encode the branch slash
-    contains "$(nth_curl_call 3)" '*target.ref_name=feature%2Fx*'
-    not_contains "$(nth_curl_call 3)" '*target.ref_name=feature/x*'
+    # target.ref_name= is not a valid Bitbucket pipelines filter and can never
+    # match a PR-triggered pipeline — the query must not carry it.
+    not_contains "$(nth_curl_call 3)" '*target.ref_name*'
+    contains "$(nth_curl_call 3)" '*sort=-created_on*'
+}
+
+@test "pr checks: lists a PR-triggered pipeline (target.source, ref_name null)" {
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[]}' \
+        200 '{"values":[{"build_number":7,"state":{"name":"COMPLETED","result":{"name":"FAILED"}},"created_on":"2026-07-22T10:00:00+00:00","creator":{"display_name":"Dima"},"target":{"type":"pipeline_pullrequest_target","source":"feature/x","ref_name":null,"commit":{"hash":"abcdef1234567"},"selector":{"type":"pull-requests"}}}]}'
+    run cmd_pr_checks 42
+    [ "$status" -eq 0 ]
+    contains "$output" '*#7*'
+    contains "$output" '*fail*'
+    contains "$output" '*pull-requests*'
+    contains "$output" '*abcdef1*'
+}
+
+@test "pr checks: lists a branch-triggered pipeline (target.ref_name)" {
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[]}' \
+        200 '{"values":[{"build_number":9,"state":{"name":"COMPLETED","result":{"name":"SUCCESSFUL"}},"created_on":"2026-07-22T11:00:00+00:00","creator":{"display_name":"Dima"},"target":{"type":"pipeline_ref_target","ref_name":"feature/x","commit":{"hash":"1234567abcdef"},"selector":{"type":"branches"}}}]}'
+    run cmd_pr_checks 42
+    [ "$status" -eq 0 ]
+    contains "$output" '*#9*'
+    contains "$output" '*pass*'
+    contains "$output" '*branches*'
+}
+
+@test "pr checks: filters out pipelines from other branches" {
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[]}' \
+        200 '{"values":[{"build_number":7,"state":{"result":{"name":"FAILED"}},"created_on":"2026-07-22T10:00:00+00:00","creator":{"display_name":"D"},"target":{"source":"feature/x","commit":{"hash":"aaaaaaabbbb"},"selector":{"type":"pull-requests"}}},{"build_number":8,"state":{"result":{"name":"SUCCESSFUL"}},"created_on":"2026-07-22T10:30:00+00:00","creator":{"display_name":"D"},"target":{"ref_name":"main","commit":{"hash":"ccccccceeee"},"selector":{"type":"branches"}}}]}'
+    run cmd_pr_checks 42
+    [ "$status" -eq 0 ]
+    contains "$output" '*#7*'
+    not_contains "$output" '*#8*'
+}
+
+@test "pr checks: hints at the scan window when it comes back full with no match" {
+    export BB_BASH_PIPELINE_SCAN=1
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[]}' \
+        200 '{"values":[{"build_number":8,"state":{"result":{"name":"SUCCESSFUL"}},"created_on":"2026-07-22T10:30:00+00:00","creator":{"display_name":"D"},"target":{"ref_name":"main","commit":{"hash":"ccccccceeee"},"selector":{"type":"branches"}}}]}'
+    run cmd_pr_checks 42
+    unset BB_BASH_PIPELINE_SCAN
+    [ "$status" -eq 0 ]
+    contains "$output" '*no pipelines for this branch*'
+    contains "$output" '*BB_BASH_PIPELINE_SCAN*'
 }
 
 @test "pr checks: prints empty-state messages when no statuses or pipelines" {
@@ -246,4 +296,305 @@ teardown() {
     run cmd_pr_approve 5 "../foo" 7
     [ "$status" -ne 0 ]
     contains "$output" '*PR id must be numeric*'
+}
+
+@test "raw: pretty-prints JSON by default" {
+    stub_curl '{"a":1}'
+    run cmd_raw "/foo"
+    [ "$status" -eq 0 ]
+    contains "$output" '*"a": 1*'
+}
+
+@test "raw --text: passes a plain-text body through untouched, to the given endpoint" {
+    stub_curl 'plain log line
+second line'
+    run cmd_raw --text "/pipelines/%7Bp%7D/steps/%7Bs%7D/log"
+    [ "$status" -eq 0 ]
+    contains "$output" '*plain log line*'
+    contains "$output" '*second line*'
+    # The endpoint must actually reach curl — otherwise this passes on any URL.
+    contains "$(last_curl_call)" '*/pipelines/%7Bp%7D/steps/%7Bs%7D/log*'
+}
+
+@test "raw: rejects a missing endpoint" {
+    run cmd_raw --text
+    [ "$status" -ne 0 ]
+    contains "$output" '*Usage: bbb raw*'
+}
+
+@test "pipeline log: URL-encodes braced UUIDs in path segments" {
+    stub_curl_seq \
+        200 '{"uuid":"{p-1}","build_number":7}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Build","state":{"name":"COMPLETED","result":{"name":"FAILED"}}}]}' \
+        200 'step log body'
+    run cmd_pipeline_log 7
+    [ "$status" -eq 0 ]
+    contains "$(nth_curl_call 2)" '*%7Bp-1%7D*'
+    contains "$(nth_curl_call 3)" '*%7Bs-1%7D*'
+    contains "$output" '*step log body*'
+    # The steps endpoint must carry an explicit pagelen — its default of 10
+    # would silently make "last step" the tenth on a longer pipeline.
+    contains "$(nth_curl_call 2)" '*pagelen=100*'
+}
+
+@test "pipeline log: falls back to a list scan when direct lookup fails" {
+    stub_curl_seq \
+        404 '{"error":{"message":"not found"}}' \
+        200 '{"values":[{"build_number":7,"uuid":"{p-1}"}]}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Build","state":{"result":{"name":"FAILED"}}}]}' \
+        200 'scanned log'
+    run cmd_pipeline_log 7
+    [ "$status" -eq 0 ]
+    contains "$output" '*scanned log*'
+}
+
+@test "pipeline log: a non-JSON direct-lookup body dies cleanly, no raw jq error" {
+    stub_curl_seq 200 '<html>Internal Server Error</html>'
+    run cmd_pipeline_log 7
+    [ "$status" -ne 0 ]
+    contains "$output" '*unexpected (non-JSON) response*'
+    not_contains "$output" '*jq: parse error*'
+}
+
+@test "pipeline log: picks the first failed step, not merely the last one" {
+    # The failing step must NOT be last, or select(fail)[0] and the [-1] fallback
+    # return the same element and this test cannot fail.
+    stub_curl_seq \
+        200 '{"uuid":"{p-1}","build_number":7}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Test","state":{"result":{"name":"FAILED"}}},{"uuid":"{s-2}","name":"Deploy","state":{"result":{"name":"SUCCESSFUL"}}}]}' \
+        200 'failing test output'
+    run cmd_pipeline_log 7
+    [ "$status" -eq 0 ]
+    contains "$output" '*step "Test" \[fail\]*'
+    contains "$(nth_curl_call 3)" '*%7Bs-1%7D*'
+    not_contains "$(nth_curl_call 3)" '*%7Bs-2%7D*'
+}
+
+@test "pipeline log: an ERROR step counts as failed (norm vocabulary, not literal FAILED)" {
+    stub_curl_seq \
+        200 '{"uuid":"{p-1}","build_number":7}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Compile","state":{"result":{"name":"ERROR"}}},{"uuid":"{s-2}","name":"Cleanup","state":{"result":{"name":"SUCCESSFUL"}}}]}' \
+        200 'compiler error output'
+    run cmd_pipeline_log 7
+    [ "$status" -eq 0 ]
+    contains "$output" '*step "Compile" \[fail\]*'
+    contains "$(nth_curl_call 3)" '*%7Bs-1%7D*'
+}
+
+@test "pipeline log: a FAILURE step counts as failed too" {
+    stub_curl_seq \
+        200 '{"uuid":"{p-1}","build_number":7}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Lint","state":{"result":{"name":"FAILURE"}}},{"uuid":"{s-2}","name":"Deploy","state":{"result":{"name":"SUCCESSFUL"}}}]}' \
+        200 'lint output'
+    run cmd_pipeline_log 7
+    [ "$status" -eq 0 ]
+    contains "$output" '*step "Lint" \[fail\]*'
+}
+
+@test "pipeline log: falls back to the last step when nothing failed" {
+    stub_curl_seq \
+        200 '{"uuid":"{p-1}","build_number":7}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Setup","state":{"result":{"name":"SUCCESSFUL"}}},{"uuid":"{s-2}","name":"Deploy","state":{"result":{"name":"SUCCESSFUL"}}}]}' \
+        200 'last step log'
+    run cmd_pipeline_log 7
+    [ "$status" -eq 0 ]
+    contains "$output" '*step "Deploy" \[pass\]*'
+    contains "$(nth_curl_call 3)" '*%7Bs-2%7D*'
+}
+
+@test "pipeline log: a step with no state does not abort jq" {
+    stub_curl_seq \
+        200 '{"uuid":"{p-1}","build_number":7}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Mystery"}]}' \
+        200 'the log'
+    run cmd_pipeline_log 7
+    [ "$status" -eq 0 ]
+    contains "$output" '*step "Mystery" \[unknown\]*'
+    contains "$output" '*the log*'
+    not_contains "$output" '*explode input*'
+}
+
+@test "pipeline log: a still-running step says so instead of 404ing mid-output" {
+    stub_curl_seq \
+        200 '{"uuid":"{p-1}","build_number":7}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Build","state":{"name":"IN_PROGRESS"}}]}'
+    run cmd_pipeline_log 7
+    [ "$status" -ne 0 ]
+    contains "$output" '*still running*'
+}
+
+@test "pipeline log: a direct lookup returning a different build is rejected" {
+    # /pipelines/<build#> is not guaranteed to interpret a build number; if it
+    # answers with another pipeline we must not label its log as the one asked for.
+    stub_curl_seq \
+        200 '{"uuid":"{p-99}","build_number":99}' \
+        200 '{"values":[{"build_number":7,"uuid":"{p-7}"}]}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Build","state":{"result":{"name":"FAILED"}}}]}' \
+        200 'correct log'
+    run cmd_pipeline_log 7
+    [ "$status" -eq 0 ]
+    contains "$output" '*correct log*'
+    contains "$(nth_curl_call 3)" '*%7Bp-7%7D*'
+    not_contains "$(nth_curl_call 3)" '*%7Bp-99%7D*'
+}
+
+@test "pipeline log: --step= with no value is rejected" {
+    run cmd_pipeline_log 7 --step=
+    [ "$status" -ne 0 ]
+    contains "$output" '*requires a value*'
+}
+
+@test "pipeline log: --step=2 selects the second step (1-based)" {
+    # Step 3 is the failing one, so an implementation that ignored --step and
+    # fell back to first-failed would land on {s-3} and fail this test.
+    stub_curl_seq \
+        200 '{"uuid":"{p-1}","build_number":7}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"A","state":{"result":{"name":"SUCCESSFUL"}}},{"uuid":"{s-2}","name":"B","state":{"result":{"name":"SUCCESSFUL"}}},{"uuid":"{s-3}","name":"C","state":{"result":{"name":"FAILED"}}}]}' \
+        200 'second step log'
+    run cmd_pipeline_log 7 --step=2
+    [ "$status" -eq 0 ]
+    contains "$output" '*step "B" \[pass\]*'
+    contains "$(nth_curl_call 3)" '*%7Bs-2%7D*'
+    not_contains "$(nth_curl_call 3)" '*%7Bs-3%7D*'
+}
+
+@test "pr logs: --step=2 selects the second step (1-based)" {
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[{"build_number":7,"uuid":"{p-7}","target":{"source":"feature/x"}}]}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"A","state":{"result":{"name":"SUCCESSFUL"}}},{"uuid":"{s-2}","name":"B","state":{"result":{"name":"FAILED"}}}]}' \
+        200 'second step log'
+    run cmd_pr_logs 42 --step=2
+    [ "$status" -eq 0 ]
+    contains "$output" '*step "B" \[fail\]*'
+    contains "$(nth_curl_call 4)" '*%7Bs-2%7D*'
+}
+
+@test "pipeline log: --step past the end is rejected with a clear message" {
+    stub_curl_seq \
+        200 '{"uuid":"{p-1}","build_number":7}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"A","state":{"result":{"name":"SUCCESSFUL"}}}]}'
+    run cmd_pipeline_log 7 --step=99
+    [ "$status" -ne 0 ]
+    contains "$output" '*Step 99 not found*'
+}
+
+@test "pipeline log: a 500 on the list scan is not reported as a scope problem" {
+    # Direct lookup 404s, fallback scan 500s. The message must surface the
+    # server's error, not assert a missing token scope.
+    stub_curl_seq \
+        404 '{"error":{"message":"not found"}}' \
+        500 '{"error":{"message":"Internal server error"}}'
+    run cmd_pipeline_log 7
+    [ "$status" -ne 0 ]
+    contains "$output" '*Internal server error*'
+    not_contains "$output" '*read:pipeline scope*'
+}
+
+@test "pipeline log: --step=0 is rejected, not silently the last step" {
+    stub_curl_seq \
+        200 '{"uuid":"{p-1}","build_number":7}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Setup","state":{"result":{"name":"SUCCESSFUL"}}},{"uuid":"{s-2}","name":"Test","state":{"result":{"name":"FAILED"}}}]}'
+    run cmd_pipeline_log 7 --step=0
+    [ "$status" -ne 0 ]
+    contains "$output" '*--step must be 1 or greater*'
+}
+
+@test "pipeline log: rejects a non-numeric build number" {
+    run cmd_pipeline_log "../etc/passwd"
+    [ "$status" -ne 0 ]
+    contains "$output" '*build number must be numeric*'
+}
+
+@test "pr logs: resolves the newest matching pipeline for the PR" {
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[{"build_number":7,"uuid":"{p-7}","target":{"source":"feature/x"}}]}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Build","state":{"result":{"name":"FAILED"}}}]}' \
+        200 'pr log body'
+    run cmd_pr_logs 42
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR 42 pipeline #7*'
+    contains "$output" '*pr log body*'
+}
+
+@test "pr checks: a non-numeric BB_BASH_PIPELINE_SCAN is fatal, not a scope problem" {
+    export BB_BASH_PIPELINE_SCAN=abc
+    # Queue nothing: validation must happen before any request goes out, and
+    # stub_curl_seq exits 99 on exhaustion, so an empty queue is the assertion.
+    stub_curl_seq
+    run cmd_pr_checks 42
+    unset BB_BASH_PIPELINE_SCAN
+    [ "$status" -ne 0 ]
+    contains "$output" '*BB_BASH_PIPELINE_SCAN must be numeric*'
+    not_contains "$output" '*read:pipeline scope*'
+}
+
+@test "pr checks: a scan window above Bitbucket's pagelen cap is rejected" {
+    export BB_BASH_PIPELINE_SCAN=500
+    stub_curl_seq
+    run cmd_pr_checks 42
+    unset BB_BASH_PIPELINE_SCAN
+    [ "$status" -ne 0 ]
+    contains "$output" '*must be 1-100*'
+}
+
+@test "pr checks: an octal-looking scan window does not slip past the cap" {
+    # 0144 is octal 100 to [[ ]], so a naive check would accept it and then
+    # ship literal pagelen=0144. It must be rejected, not silently truncated.
+    export BB_BASH_PIPELINE_SCAN=0144
+    stub_curl_seq
+    run cmd_pr_checks 42
+    unset BB_BASH_PIPELINE_SCAN
+    [ "$status" -ne 0 ]
+    contains "$output" '*must be 1-100*'
+}
+
+@test "pr checks: a tag sharing the branch name is not reported as a branch build" {
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"v1.2.0"}}}' \
+        200 '{"values":[]}' \
+        200 '{"values":[{"build_number":9,"state":{"result":{"name":"SUCCESSFUL"}},"created_on":"2026-07-22T11:00:00+00:00","creator":{"display_name":"D"},"target":{"ref_type":"TAG","ref_name":"v1.2.0","commit":{"hash":"1234567aaaa"},"selector":{"type":"branches"}}}]}'
+    run cmd_pr_checks 42
+    [ "$status" -eq 0 ]
+    contains "$output" '*no pipelines for this branch*'
+    not_contains "$output" '*#9*'
+}
+
+@test "pr checks: default scan window reaches the query" {
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[]}' \
+        200 '{"values":[]}'
+    run cmd_pr_checks 42
+    [ "$status" -eq 0 ]
+    contains "$(nth_curl_call 3)" '*pagelen=20*'
+}
+
+@test "pr logs: picks the newest match, sorted locally not by API order" {
+    # Values deliberately out of created_on order: #9 is newer but listed second.
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[{"build_number":7,"uuid":"{p-7}","created_on":"2026-07-22T10:00:00+00:00","target":{"source":"feature/x"}},{"build_number":9,"uuid":"{p-9}","created_on":"2026-07-22T18:00:00+00:00","target":{"source":"feature/x"}}]}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Build","state":{"result":{"name":"FAILED"}}}]}' \
+        200 'newest log'
+    run cmd_pr_logs 42
+    [ "$status" -eq 0 ]
+    contains "$output" '*pipeline #9*'
+    contains "$(nth_curl_call 3)" '*%7Bp-9%7D*'
+}
+
+@test "raw: a trailing --text is rejected, not silently dropped" {
+    run cmd_raw "/foo" --text
+    [ "$status" -ne 0 ]
+    contains "$output" '*Unexpected argument*'
+}
+
+@test "pr logs: dies clearly when the PR has no pipelines" {
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[]}'
+    run cmd_pr_logs 42
+    [ "$status" -ne 0 ]
+    contains "$output" '*No pipelines found for PR 42*'
 }
