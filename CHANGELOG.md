@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-07-23
+
 ### Fixed
 - `pr checks` / `pr logs` now match a PR pipeline by its PR id as well as its source branch. The PR-id arm used `target.pull_request.id`; the live API field is `target.pullrequest.id` (no underscore), so the arm was dead. It now works, which finds a PR even after its source branch is renamed and separates a live PR's pipelines from a declined PR's on the same branch. (bb-bash-g3s)
 
