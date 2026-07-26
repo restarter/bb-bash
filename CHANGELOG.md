@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `.env.example` pointed new users at a dead API-token URL (`bitbucket.org/account/settings/api-tokens/`, HTTP 404). Corrected to `id.atlassian.com/manage-profile/security/api-tokens`, matching the README, the snippet and `install.sh`. Since `install.sh` serves `.env.example` from the release tag, this reached everyone who installed. (bb-bash-63m)
+
 ## [0.2.3] - 2026-07-23
 
 ### Fixed
