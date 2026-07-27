@@ -10,6 +10,13 @@ load test_helper
 
 INSTALL_SH="$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)/scripts/install.sh"
 
+# Minimal PATH for the find_bbb_on_path tests: the fixture dirs plus just enough
+# for the helper (readlink, dirname) and the assertions (wc, tr) to run. Do NOT
+# append the real $PATH here — a real bbb install (e.g. ~/.local/bin/bbb) would
+# then be counted alongside the fixtures and break the exact-count assertions.
+# /usr/bin:/bin has the coreutils and never contains bbb.
+_COREUTILS_PATH="/usr/bin:/bin"
+
 setup() {
     TEST_TMP=$(mktemp -d)
     # Save PATH — tests below replace $PATH with synthetic paths to exercise
@@ -210,7 +217,7 @@ load_install_sh() {
     mkdir -p "$TEST_TMP/binA"
     printf '#!/bin/sh\necho A\n' > "$TEST_TMP/binA/bbb"
     chmod +x "$TEST_TMP/binA/bbb"
-    PATH="$TEST_TMP/binA:$TEST_TMP/binA:$_SAVED_PATH"
+    PATH="$TEST_TMP/binA:$TEST_TMP/binA:$_COREUTILS_PATH"
     run find_bbb_on_path
     PATH=$_SAVED_PATH
     [ "$status" -eq 0 ]
@@ -223,7 +230,7 @@ load_install_sh() {
     printf '#!/bin/sh\necho A\n' > "$TEST_TMP/binA/bbb"
     printf '#!/bin/sh\necho B\n' > "$TEST_TMP/binB/bbb"
     chmod +x "$TEST_TMP/binA/bbb" "$TEST_TMP/binB/bbb"
-    PATH="$TEST_TMP/binA:$TEST_TMP/binB:$_SAVED_PATH"
+    PATH="$TEST_TMP/binA:$TEST_TMP/binB:$_COREUTILS_PATH"
     run find_bbb_on_path
     PATH=$_SAVED_PATH
     [ "$status" -eq 0 ]
@@ -238,7 +245,7 @@ load_install_sh() {
     printf '#!/bin/sh\n' > "$TEST_TMP/real/bbb"
     chmod +x "$TEST_TMP/real/bbb"
     ln -s "$TEST_TMP/real/bbb" "$TEST_TMP/link/bbb"
-    PATH="$TEST_TMP/link:$_SAVED_PATH"
+    PATH="$TEST_TMP/link:$_COREUTILS_PATH"
     run find_bbb_on_path
     PATH=$_SAVED_PATH
     [ "$status" -eq 0 ]
@@ -251,7 +258,7 @@ load_install_sh() {
     printf '#!/bin/sh\n' > "$TEST_TMP/real/bbb"
     chmod +x "$TEST_TMP/real/bbb"
     ln -s ../real/bbb "$TEST_TMP/link/bbb"
-    PATH="$TEST_TMP/link:$_SAVED_PATH"
+    PATH="$TEST_TMP/link:$_COREUTILS_PATH"
     run find_bbb_on_path
     PATH=$_SAVED_PATH
     [ "$status" -eq 0 ]
@@ -262,7 +269,7 @@ load_install_sh() {
     load_install_sh
     mkdir -p "$TEST_TMP/bin"
     : > "$TEST_TMP/bin/bbb"   # exists but not +x
-    PATH="$TEST_TMP/bin:$_SAVED_PATH"
+    PATH="$TEST_TMP/bin:$_COREUTILS_PATH"
     run find_bbb_on_path
     PATH=$_SAVED_PATH
     [ "$status" -eq 0 ]
