@@ -23,6 +23,8 @@
 #   bbb pr inline [--old] <id> <path> <line> <text>
 #                                                 - Inline comment (default new code; --old for deleted)
 #   bbb pr approve <id> [id ...]               - Approve PR(s), batch-capable
+#   bbb pr request-changes <id> [id ...]       - Mark Changes Requested, PR stays open, batch-capable
+#   bbb pr unrequest-changes <id> [id ...]     - Withdraw Changes Requested, batch-capable
 #   bbb pr decline <id> [id ...]               - Decline (close without merge), batch-capable
 #   bbb pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=...]
 #                                                 - Merge PR (default strategy: merge_commit)
@@ -338,9 +340,22 @@ batch_action() {
             [[ -z "$msg" || "$msg" == "null" ]] && msg="ok"
             printf 'PR #%-5s %s (%s)\n' "$id" "$label" "$msg"
         else
+            # An EMPTY body here is not a per-PR HTTP error. api_post's transport
+            # `die` runs inside this $( ), so it kills only the subshell — its
+            # exit status never reaches ours. Unguarded, a dead network printed
+            # "error:" with no text for every id and the batch still exited 0,
+            # a silent failure for anything scripting this. Transport errors are
+            # fatal by design (see api_get/api_post), so abort rather than march
+            # through the remaining ids against a network that is down.
+            if [[ -z "$resp" ]]; then
+                die "empty response from Bitbucket at PR #${id} (network failure, or an empty error body) - batch aborted"
+            fi
             local err
             err=$(echo "$resp" | jq -r '.error.message // .error // "unknown error"' 2>/dev/null \
                 || echo "unparseable response")
+            # jq's `//` only falls through on null/false, so an error body
+            # carrying an empty message string reaches here blank.
+            [[ -z "$err" ]] && err="unknown error"
             printf 'PR #%-5s error: %s\n' "$id" "$err"
         fi
         if [[ $total -gt 1 && $i -lt $total ]]; then
@@ -964,6 +979,45 @@ cmd_pr_decline() {
     batch_action "declined" "/pullrequests/{id}/decline" '.state // "DECLINED"' "$@"
 }
 
+# Non-destructive review outcome: marks the caller's participant state as
+# changes_requested while the PR stays OPEN. Not to be confused with
+# `pr decline`, which closes the PR without merging.
+cmd_pr_request_changes() {
+    require_args 1 $# "Usage: bbb pr request-changes <id> [id ...]"
+    batch_action "changes requested by" "/pullrequests/{id}/request-changes" \
+        '.user.display_name // "ok"' "$@"
+}
+
+# Withdraw a changes_requested mark. DELETE has no response body, so this
+# cannot go through batch_action (POST-only, prints a jq-parsed body); it
+# mirrors batch_action's loop shape instead — per-id, continue on failure,
+# same inter-call delay.
+cmd_pr_unrequest_changes() {
+    require_args 1 $# "Usage: bbb pr unrequest-changes <id> [id ...]"
+    local id status total=$# i=0
+    for id in "$@"; do
+        require_numeric "PR id" "$id"
+        i=$((i + 1))
+        status=$(api_delete "/pullrequests/${id}/request-changes")
+        if [[ "$status" == "204" || "$status" == "200" ]]; then
+            printf 'PR #%-5s changes-request withdrawn\n' "$id"
+        elif [[ "$status" == "404" ]]; then
+            # Verified live: withdrawing when the caller has no changes-request
+            # on the PR returns 404, same as a PR that doesn't exist. Say both
+            # rather than a bare code.
+            printf 'PR #%-5s nothing to withdraw (no changes-request by you, or no such PR)\n' "$id"
+        else
+            printf 'PR #%-5s error: HTTP %s\n' "$id" "$status"
+        fi
+        # Plain `if`, not `[[ ]] && sleep`: as the loop body's last command the
+        # && form returns 1 whenever the condition is false (always so on a
+        # single id), which under `set -e` fails the command on success.
+        if [[ $total -gt 1 && $i -lt $total ]]; then
+            sleep "${BB_BASH_BATCH_DELAY:-0.3}"
+        fi
+    done
+}
+
 # pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=<text>]
 # Default strategy: merge_commit (Bitbucket's most common UI default).
 # Explicit override via flags. No repo-default fetch (the API field
@@ -1226,6 +1280,8 @@ usage() {
     echo "  bbb pr comment <id> <text>                   Add general comment"
     echo "  bbb pr inline [--old] <id> <path> <line> <text>  Inline comment (default new code, --old for deleted)"
     echo "  bbb pr approve <id> [id ...]                 Approve PR, batch-capable"
+    echo "  bbb pr request-changes <id> [id ...]         Mark Changes Requested (PR stays open), batch-capable"
+    echo "  bbb pr unrequest-changes <id> [id ...]       Withdraw Changes Requested, batch-capable"
     echo "  bbb pr decline <id> [id ...]                 Decline (close without merge), batch-capable"
     echo "  bbb pr merge <id> [--squash|--commit|--ff] [--delete-branch]  Merge PR (default: merge_commit)"
     echo "  bbb pr reply <pr_id> <comment_id> <text>   Reply to a comment"
@@ -1283,6 +1339,8 @@ main() {
                 inline)         cmd_pr_inline "$@" ;;
                 approve)        cmd_pr_approve "$@" ;;
                 decline)        cmd_pr_decline "$@" ;;
+                request-changes)   cmd_pr_request_changes "$@" ;;
+                unrequest-changes) cmd_pr_unrequest_changes "$@" ;;
                 merge)          cmd_pr_merge "$@" ;;
                 reply)          require_args 3 $# "Usage: bbb pr reply <pr_id> <comment_id> <text>"; cmd_pr_reply "$@" ;;
                 edit-comment)   require_args 3 $# "Usage: bbb pr edit-comment <pr_id> <comment_id> <text>"; cmd_pr_edit_comment "$@" ;;

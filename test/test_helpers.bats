@@ -135,6 +135,40 @@ teardown() {
     contains "$output" '*network error*'
 }
 
+@test "batch_action: a transport failure aborts the batch, it does not exit 0" {
+    # api_post's transport `die` fires inside batch_action's $( ), so it kills
+    # only the subshell. Before the guard this printed a blank "error:" line per
+    # id and still exited 0 — a dead network read as a successful batch.
+    stub_curl_fail 6
+    run batch_action "approved by" "/pullrequests/{id}/approve" '.user.display_name' 1 2 3
+    [ "$status" -ne 0 ]
+    contains "$output" '*batch aborted*'
+    not_contains "$output" '*PR #1     error: *'
+    # Aborted at the first id: no point hammering a network that is down.
+    [ "$(wc -l < "$STUB_DIR/.calls")" -eq 1 ]
+}
+
+@test "batch_action: an error body with an empty message still names the failure" {
+    # jq's `//` falls through on null/false only, so an empty message string is
+    # passed along verbatim and the error line would read "error: " with no text.
+    stub_curl '{"error":{"message":""}}' 400
+    run batch_action "approved by" "/pullrequests/{id}/approve" '.user.display_name' 7
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #7*error*unknown error*'
+}
+
+@test "batch_action: an HTTP error still continues the batch" {
+    # The abort above must not have turned every per-item failure into a stop.
+    stub_curl_seq \
+        200 '{"user":{"display_name":"alice"}}' \
+        404 '{"error":{"message":"PR not found"}}' \
+        200 '{"user":{"display_name":"bob"}}'
+    run batch_action "approved by" "/pullrequests/{id}/approve" '.user.display_name' 1 2 3
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #2*error*PR not found*'
+    contains "$output" '*PR #3*approved by*bob*'
+}
+
 @test "batch_action: success format" {
     stub_curl '{"state":"DECLINED"}' 200
     run batch_action "declined" "/pullrequests/{id}/decline" '.state' 42

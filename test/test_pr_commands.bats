@@ -49,6 +49,103 @@ teardown() {
     contains "$(last_curl_call)" '*/pullrequests/5/approve*'
 }
 
+@test "pr request-changes: requires at least one ID" {
+    run cmd_pr_request_changes
+    [ "$status" -ne 0 ]
+    contains "$output" '*Usage*'
+}
+
+@test "pr request-changes: sends correct endpoint and reports the reviewer" {
+    stub_curl '{"user":{"display_name":"alice"},"state":"changes_requested"}' 200
+    run cmd_pr_request_changes 5
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #5*changes requested by*alice*'
+    contains "$(last_curl_call)" '*/pullrequests/5/request-changes*'
+    # Non-destructive: must NOT hit the decline endpoint.
+    not_contains "$(last_curl_call)" '*/decline*'
+}
+
+@test "pr request-changes: batch continues on per-item failure" {
+    stub_curl_seq \
+        200 '{"user":{"display_name":"alice"}}' \
+        404 '{"error":{"message":"PR not found"}}' \
+        200 '{"user":{"display_name":"bob"}}'
+    run cmd_pr_request_changes 1 2 3
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #1*changes requested by*alice*'
+    contains "$output" '*PR #2*error*'
+    contains "$output" '*PR #3*changes requested by*bob*'
+    contains "$(nth_curl_call 1)" '*/pullrequests/1/request-changes*'
+    contains "$(nth_curl_call 2)" '*/pullrequests/2/request-changes*'
+    contains "$(nth_curl_call 3)" '*/pullrequests/3/request-changes*'
+}
+
+@test "pr request-changes: rejects non-numeric id in batch" {
+    stub_curl '{"user":{"display_name":"alice"}}' 200
+    run cmd_pr_request_changes 5 "../foo" 7
+    [ "$status" -ne 0 ]
+}
+
+@test "pr unrequest-changes: requires at least one ID" {
+    run cmd_pr_unrequest_changes
+    [ "$status" -ne 0 ]
+    contains "$output" '*Usage*'
+}
+
+@test "pr unrequest-changes: sends DELETE to the request-changes endpoint" {
+    stub_curl_code 204
+    run cmd_pr_unrequest_changes 5
+    # Exit 0 on a single id: guards the `[[ cond ]] && sleep` errexit trap —
+    # as the loop body's last command it returns 1 when the condition is false,
+    # which is ALWAYS the case for one id.
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #5*withdrawn*'
+    contains "$(last_curl_call)" '*-X DELETE*'
+    contains "$(last_curl_call)" '*/pullrequests/5/request-changes*'
+}
+
+@test "pr unrequest-changes: accepts 200 as success" {
+    stub_curl_code 200
+    run cmd_pr_unrequest_changes 5
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #5*withdrawn*'
+}
+
+@test "pr unrequest-changes: 404 says nothing to withdraw, not a bare code" {
+    # Verified live: a withdrawal with no changes-request in place returns 404,
+    # indistinguishable from a missing PR — the message must name both.
+    stub_curl_code 404
+    run cmd_pr_unrequest_changes 5
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #5*nothing to withdraw*'
+    not_contains "$output" '*HTTP 404*'
+}
+
+@test "pr unrequest-changes: an unexpected code still surfaces verbatim" {
+    stub_curl_code 500
+    run cmd_pr_unrequest_changes 5
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #5*error*500*'
+}
+
+@test "pr unrequest-changes: batch continues on per-item failure" {
+    stub_curl_code_seq 204 403 204
+    run cmd_pr_unrequest_changes 1 2 3
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #1*withdrawn*'
+    contains "$output" '*PR #2*error*403*'
+    contains "$output" '*PR #3*withdrawn*'
+    contains "$(nth_curl_call 1)" '*/pullrequests/1/request-changes*'
+    contains "$(nth_curl_call 2)" '*/pullrequests/2/request-changes*'
+    contains "$(nth_curl_call 3)" '*/pullrequests/3/request-changes*'
+}
+
+@test "pr unrequest-changes: rejects non-numeric id in batch" {
+    stub_curl_code 204
+    run cmd_pr_unrequest_changes 5 "../foo" 7
+    [ "$status" -ne 0 ]
+}
+
 @test "pr inline: --old flag sends 'from' field + path + text in payload" {
     stub_curl '{"id":1,"inline":{"path":"x.ts","from":10},"links":{"html":{"href":"http://x"}}}' 200
     run cmd_pr_inline --old 5 "x.ts" 10 "old code comment"
@@ -308,9 +405,15 @@ teardown() {
 }
 
 @test "pr approve: rejects non-numeric id in batch" {
+    # The stub is load-bearing: without it `curl` is the REAL curl and this unit
+    # test silently made a live call to api.bitbucket.org, reaching the second id
+    # only because a 401 came back with a body. It failed offline.
+    stub_curl '{"user":{"display_name":"alice"}}' 200
     run cmd_pr_approve 5 "../foo" 7
     [ "$status" -ne 0 ]
     contains "$output" '*PR id must be numeric*'
+    # Only the valid id reached the API; the batch died on the bad one.
+    [ "$(wc -l < "$STUB_DIR/.calls")" -eq 1 ]
 }
 
 @test "raw: pretty-prints JSON by default" {
