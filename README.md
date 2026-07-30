@@ -108,7 +108,9 @@ bbb pr delete-comment 42 753926626
 
 bbb pr approve 42                        # single
 bbb pr approve 42 43 44                  # batch
-bbb pr decline 99 100                    # batch close-without-merge
+bbb pr request-changes 42                # Changes Requested, PR stays open
+bbb pr unrequest-changes 42              # withdraw it once fixes land
+bbb pr decline 99 100                    # batch close-without-merge (destructive)
 bbb pr merge 42 --squash --delete-branch
 
 bbb pr create main "Title" "Description"

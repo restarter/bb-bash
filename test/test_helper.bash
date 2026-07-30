@@ -97,6 +97,47 @@ EOF
     chmod +x "$STUB_DIR/curl"
 }
 
+# stub_curl_code <http_code> — stub for api_delete-style calls, i.e.
+# `curl -s -o /dev/null -w "%{http_code}"`, where real curl discards the body
+# and prints ONLY the status code. stub_curl cannot express this: it ignores
+# -o and always prints 'body\n<code>', so the caller would capture a leading
+# newline plus the body and every code comparison would fail.
+stub_curl_code() {
+    local code="${1:-204}"
+    cat >"$STUB_DIR/curl" <<EOF
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> "$STUB_DIR/.calls"
+printf '%s' $(printf %q "$code")
+EOF
+    chmod +x "$STUB_DIR/curl"
+}
+
+# stub_curl_code_seq <code1> <code2> ... — queued variant of stub_curl_code for
+# batch DELETE commands. Fails loudly on queue exhaustion (exit 99), like
+# stub_curl_seq.
+stub_curl_code_seq() {
+    local i=0 c
+    for c in "$@"; do
+        printf '%s' "$c" > "$STUB_DIR/.curl_code_seq.$i"
+        i=$((i + 1))
+    done
+    printf '0\n' > "$STUB_DIR/.curl_code_seq.idx"
+
+    cat >"$STUB_DIR/curl" <<EOF
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> "$STUB_DIR/.calls"
+idx=\$(cat "$STUB_DIR/.curl_code_seq.idx")
+if [[ ! -f "$STUB_DIR/.curl_code_seq.\${idx}" ]]; then
+    printf 'stub_curl_code_seq: queue exhausted at call %s\\n' "\$((idx+1))" >&2
+    exit 99
+fi
+code=\$(cat "$STUB_DIR/.curl_code_seq.\${idx}")
+echo \$((idx + 1)) > "$STUB_DIR/.curl_code_seq.idx"
+printf '%s' "\$code"
+EOF
+    chmod +x "$STUB_DIR/curl"
+}
+
 # stub_curl_download <body> [http_code]
 # Stub for install-agent style curl: 'curl ... -o <file>'. Writes <body> to
 # the file given via -o; exits non-zero on http_code != 200.

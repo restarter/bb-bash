@@ -173,6 +173,30 @@ Pipelines are matched **client-side**. PR-triggered pipelines carry `target.sour
 
 ---
 
+## pr request-changes
+
+**Synopsis:** `bbb pr request-changes <id> [id ...]`
+
+**Description:** Mark one or more PRs as **Changes Requested**. Non-destructive: it sets the caller's participant state to `changes_requested` and the PR stays OPEN. This is the normal "I reviewed it, it needs work" outcome — not `pr decline`, which closes the PR without merging. Batch-capable like `approve`.
+
+**Required scopes:** `write:pullrequest:bitbucket`
+
+**Example:** `bbb pr request-changes 42`
+
+---
+
+## pr unrequest-changes
+
+**Synopsis:** `bbb pr unrequest-changes <id> [id ...]`
+
+**Description:** Withdraw a Changes Requested mark (`DELETE` on the same endpoint), e.g. after the author pushed fixes. Batch-capable. Success is HTTP 204. Withdrawing when you have no changes-request on the PR returns 404 — indistinguishable from a PR that doesn't exist — so it reports `nothing to withdraw (no changes-request by you, or no such PR)` rather than a bare code.
+
+**Required scopes:** `write:pullrequest:bitbucket`
+
+**Example:** `bbb pr unrequest-changes 42`
+
+---
+
 ## pr decline
 
 **Synopsis:** `bbb pr decline <id> [id ...]`

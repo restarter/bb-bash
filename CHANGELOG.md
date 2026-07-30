@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `bbb pr request-changes <id> [id ...]` — mark a PR as **Changes Requested**, the normal non-destructive review outcome. The PR stays OPEN; only the caller's participant state changes. Previously the only native review verbs were `approve` and `decline`, and `decline` closes the PR — so recording "needs work" meant dropping to raw REST. Batch-capable like `approve`. (bb-bash-c6j)
+- `bbb pr unrequest-changes <id> [id ...]` — withdraw a Changes Requested mark once the author has pushed fixes. Batch-capable. (bb-bash-c6j)
+
 ### Fixed
+- Batch commands (`pr approve`, `pr decline`, `pr request-changes`) no longer report a network failure as success. `api_post`'s transport `die` fires inside `batch_action`'s command substitution, so it killed only the subshell: a dead network printed `error:` with no message for every id and the batch still exited `0`. The empty body is now caught and the batch aborts loudly. Same bug class as the `api_get` fix in 0.2.2, in the `api_post` path. An error body carrying an empty message string also no longer prints a blank reason — `jq`'s `//` falls through on null/false only. (bb-bash-c6j)
 - `.env.example` pointed new users at a dead API-token URL (`bitbucket.org/account/settings/api-tokens/`, HTTP 404). Corrected to `id.atlassian.com/manage-profile/security/api-tokens`, matching the README, the snippet and `install.sh`. Since `install.sh` serves `.env.example` from the release tag, this reached everyone who installed. (bb-bash-63m)
 
 ## [0.2.3] - 2026-07-23

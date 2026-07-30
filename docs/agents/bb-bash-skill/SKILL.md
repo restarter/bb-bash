@@ -55,11 +55,15 @@ bbb pr edit-comment <pr_id> <comment_id> "new body"          # only own comments
 bbb pr delete-comment <pr_id> <comment_id>                   # only own comments
 ```
 
-### Approve / decline / merge
+### Approve / request changes / decline / merge
+
+`request-changes` is the non-destructive "needs work" verdict — the PR stays OPEN and only your participant state changes. `decline` **closes** the PR without merging; use it to kill stale work, never to ask for changes.
 
 ```bash
 bbb pr approve <id> [<id> ...]           # batch-capable
-bbb pr decline <id> [<id> ...]           # batch-capable
+bbb pr request-changes <id> [<id> ...]   # Changes Requested, PR stays open; batch-capable
+bbb pr unrequest-changes <id> [<id> ...] # withdraw it once fixes land; batch-capable
+bbb pr decline <id> [<id> ...]           # DESTRUCTIVE: closes the PR; batch-capable
 bbb pr merge <id>                        # default merge_commit
 bbb pr merge <id> --squash --delete-branch
 bbb pr merge <id> --ff --message="Custom merge message"
@@ -106,12 +110,15 @@ When the user says "review PR #N" or similar:
    bbb pr inline <N> path/to/file 42 "consider extracting this branch"
    bbb pr inline --old <N> path/to/file 17 "why was this guard removed?"
    ```
-4. Wrap up with either approval or a summary comment:
+4. Wrap up with the verdict that matches the review:
    ```bash
-   bbb pr approve <N>
-   # OR
+   bbb pr approve <N>                     # good to go
+   # OR — needs work; the PR stays open so the author can push fixes
    bbb pr comment <N> "Summary of review: 3 inline notes, biggest concern is the removed guard at line 17"
+   bbb pr request-changes <N>
    ```
+   Do not use `bbb pr decline` as the "needs work" outcome — it closes the PR.
+   Once the author has pushed fixes, `bbb pr unrequest-changes <N>` withdraws the mark.
 
 ## Workflow: respond to PR feedback
 

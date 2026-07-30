@@ -70,7 +70,7 @@ The check `[[ "$url" =~ (^|@|/)bitbucket\.org[:/] ]]` uses anchored regex to rej
 
 Soft mode is used by:
 
-- Batch commands (`pr approve`, `pr decline`) — one failure shouldn't kill the whole loop
+- Batch commands (`pr approve`, `pr decline`, `pr request-changes`) — one failure shouldn't kill the whole loop
 - Optional endpoints (`pr checks` pipelines) — degrade gracefully when token lacks scope. `pr logs` / `pipeline log` use `--soft` only to give a readable message before dying: the scope is mandatory for them, there is nothing to degrade to.
 
 Note that `--soft` governs only HTTP status, not the `curl` invocation itself: every `api_*` helper `die`s on a non-zero `curl` exit (a DNS/TLS/connection failure), soft mode or not, so a transport error is never mistaken for an empty successful response.
@@ -81,14 +81,27 @@ Callers under `set -e` (which the script enables at top) SHOULD use the `if … 
 if resp=$(api_post --soft "$endpoint" "{}"); then
     # success branch
 else
-    # failure branch
+    # failure branch — see the subshell caveat below
+fi
+```
+
+**The `$( )` swallows the transport `die`.** The guarantee above holds inside the helper, not at the call site: `die` runs in the command substitution's subshell, so it exits *that* subshell, prints to stderr, and hands the caller nothing but a non-zero status — indistinguishable from the `--soft` HTTP-error return. The failure branch then parses an empty body, and `jq`'s `// "unknown error"` fallback does not fire on empty input (it falls through on `null`/`false`, and there is no input value at all), so the caller reports a blank error and carries on. `batch_action` shipped exactly that bug: a dead network printed `error:` with no message for every id and the batch still exited `0`.
+
+So in the failure branch, **an empty body is not an HTTP error** — it means the helper died. Treat it as fatal:
+
+```bash
+else
+    if [[ -z "$resp" ]]; then
+        die "empty response from Bitbucket at PR #${id} (network failure, or an empty error body) - batch aborted"
+    fi
+    # real HTTP error: parse the body
 fi
 ```
 
 ## Error handling philosophy
 
 - `die <msg>` — print to stderr with `Error:` prefix, `exit 1`
-- API helpers dive on HTTP >=400 by default (fail fast for single-PR commands)
+- API helpers `die` on HTTP >=400 by default (fail fast for single-PR commands)
 - `--soft` flag opts into continue-on-error semantics (batch and optional endpoints)
 - All command functions run under `set -euo pipefail`
 - User-input-to-JSON always goes through `jq --arg` or `jq -Rs` (eliminates JSON-injection class of bugs)
