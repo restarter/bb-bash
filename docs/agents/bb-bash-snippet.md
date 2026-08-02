@@ -25,8 +25,9 @@ bbb pr list                              # open PRs (default)
 bbb pr list --state=merged --author=alice
 
 # Inspect a PR
-bbb pr show <id>
+bbb pr show <id>                         # + reviewers and who approved / requested changes
 bbb pr diff <id>
+bbb pr diff <id> --stat                  # size only: N files, +X -Y (no full diff fetched)
 bbb pr comments <id>
 bbb pr checks <id>                       # CI + pipelines status
 bbb pr logs <id> [--step=N]              # newest pipeline's log; first failed step by default

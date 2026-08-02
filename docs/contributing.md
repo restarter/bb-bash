@@ -75,6 +75,25 @@ cmd_pr_foo() {
 
 **`batch_action` is POST-only.** It calls `api_post --soft` and formats the response body with the jq expression you pass. A batch command whose verb is `DELETE` cannot use it: `api_delete` sends no body and returns only the HTTP status code, so there is nothing for the jq expression to read. Such a command hand-rolls the same loop shape instead — per-id `require_numeric`, continue on failure, the same `BB_BASH_BATCH_DELAY` between calls — and branches on the status code. `cmd_pr_unrequest_changes` is the reference example. Keep the loop shape identical so the two read alike; in particular use a plain `if` for the inter-call sleep, never `[[ cond ]] && sleep …`, which returns 1 as the loop body's last command and fails the function under `set -e` on every single-id call.
 
+## Renderers shared by two commands
+
+When two commands print the same API data, extract the rendering rather than copying the jq. `render_diffstat <pr_id> [--totals]` is the reference: `pr show` calls it for the file list, `pr diff --stat` calls it with `--totals` for the summary line as well.
+
+Shape to copy:
+
+```bash
+render_foo() {
+    local id="$1" extra=0
+    [[ "${2:-}" == "--extra" ]] && extra=1
+    local body
+    body=$(api_get "/foo/${id}?pagelen=100")     # fetch ONCE, render many
+    [[ $extra -eq 1 ]] && echo "$body" | jq -r '<summary>'
+    echo "$body" | jq -r '<list>'
+}
+```
+
+Two rules the reference follows. **One fetch per call** — a caller that needs both a summary and a list must not pay for the endpoint twice, so the body is captured into a variable and each renderer reads that. And **the optional part is opt-in, not the default**: adding the totals line to `pr show` would have changed the output of a shipped command for no reason, so the extra line belongs to the caller that asked for it.
+
 ## Testing pattern (REQUIRED)
 
 Always capture outbound payload to catch wrong-field bugs. The `last_curl_call` helper returns the most recent curl invocation args:

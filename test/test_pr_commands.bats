@@ -444,6 +444,118 @@ teardown() {
     contains "$output" '*PR id must be numeric*'
 }
 
+# pr show makes TWO calls — the PR object, then /diffstat. A single-shot
+# stub_curl hands the PR body to both, and the second jq then dies on a missing
+# .values, so every one of these needs the sequenced stub.
+pr_show_body() {
+    printf '{"id":7,"title":"T","state":"OPEN","author":{"display_name":"Author A"},
+             "source":{"branch":{"name":"src"}},"destination":{"branch":{"name":"main"}},
+             "created_on":"2026-08-02","updated_on":"2026-08-02","description":"d",
+             "links":{"html":{"href":"http://x"}},"participants":%s}' "$1"
+}
+
+@test "pr show: lists assigned reviewers with their states" {
+    stub_curl_seq 200 "$(pr_show_body '[
+        {"user":{"display_name":"Rev One"},"role":"REVIEWER","approved":true,"state":"approved"},
+        {"user":{"display_name":"Rev Two"},"role":"REVIEWER","approved":false,"state":null}]')" \
+                  200 '{"values":[]}'
+    run cmd_pr_show 7
+    [ "$status" -eq 0 ]
+    contains "$output" '*Reviewers:*Rev One (approved)*'
+    contains "$output" '*Rev Two (no response)*'
+    # Costs no request of its own: PR object, then diffstat, nothing more.
+    contains "$(nth_curl_call 1)" '*/pullrequests/7*'
+    contains "$(nth_curl_call 2)" '*diffstat*'
+    [ -z "$(nth_curl_call 3)" ]
+}
+
+@test "pr show: renders a placeholder when no reviewers are assigned" {
+    stub_curl_seq 200 "$(pr_show_body '[]')" 200 '{"values":[]}'
+    run cmd_pr_show 7
+    [ "$status" -eq 0 ]
+    contains "$output" '*Reviewers:   (none assigned)*'
+    contains "$output" '*Changes requested by: -*'
+}
+
+@test "pr show: an unassigned approver is surfaced, not hidden by the REVIEWER filter" {
+    # The live case this exists for: Bitbucket files anyone who acts without
+    # being assigned under PARTICIPANT, so a REVIEWER-only view would report
+    # "no reviewers" on a PR that is already approved.
+    stub_curl_seq 200 "$(pr_show_body '[
+        {"user":{"display_name":"Rev One"},"role":"REVIEWER","approved":false,"state":null},
+        {"user":{"display_name":"Drive By"},"role":"PARTICIPANT","approved":true,"state":"approved"}]')" \
+                  200 '{"values":[]}'
+    run cmd_pr_show 7
+    [ "$status" -eq 0 ]
+    contains "$output" '*Also approved by: Drive By (not assigned)*'
+    # ...and the unassigned approver must NOT be presented as an assigned reviewer.
+    not_contains "$output" '*Reviewers:   Drive By*'
+}
+
+@test "pr show: requests the diffstat with pagelen=100" {
+    stub_curl_seq 200 "$(pr_show_body '[]')" 200 '{"values":[]}'
+    run cmd_pr_show 7
+    [ "$status" -eq 0 ]
+    contains "$(nth_curl_call 2)" '*diffstat?pagelen=100*'
+}
+
+@test "pr show: warns when the diffstat page is truncated" {
+    # Without pagelen the endpoint quietly dropped files off a wide PR and said
+    # nothing. A short list is survivable; being told nothing about it is not.
+    stub_curl_seq 200 "$(pr_show_body '[]')" \
+                  200 '{"values":[{"status":"added","new":{"path":"a"},"lines_added":1,"lines_removed":0}],"next":"http://next"}'
+    run cmd_pr_show 7
+    [ "$status" -eq 0 ]
+    contains "$output" '*truncated at 100 files*'
+}
+
+@test "pr diff --stat: reads the diffstat and never fetches the full diff" {
+    stub_curl '{"values":[{"status":"added","new":{"path":"a.txt"},"lines_added":3,"lines_removed":1}]}' 200
+    run cmd_pr_diff 7 --stat
+    [ "$status" -eq 0 ]
+    contains "$(last_curl_call)" '*/pullrequests/7/diffstat?pagelen=100*'
+    not_contains "$(last_curl_call)" '*/pullrequests/7/diff *'
+}
+
+@test "pr diff --stat: prints the totals line and the file list" {
+    stub_curl '{"values":[
+        {"status":"added","new":{"path":"a.txt"},"lines_added":3,"lines_removed":1},
+        {"status":"removed","old":{"path":"b.txt"},"lines_added":0,"lines_removed":9}]}' 200
+    run cmd_pr_diff 7 --stat
+    [ "$status" -eq 0 ]
+    contains "$output" '*2 files changed, +3 -10*'
+    contains "$output" '*a.txt*'
+    contains "$output" '*b.txt*'
+}
+
+@test "pr diff --stat: a truncated page reports 100+, not a wrong exact count" {
+    # The count has to be honest on its own line. A flat "1 files changed" with
+    # the correction printed below it is a wrong number with a footnote — worse
+    # than the silent truncation this replaces.
+    stub_curl '{"values":[{"status":"added","new":{"path":"a.txt"},"lines_added":1,"lines_removed":0}],"next":"http://next"}' 200
+    run cmd_pr_diff 7 --stat
+    [ "$status" -eq 0 ]
+    contains "$output" '*1+ files changed*'
+}
+
+@test "pr diff: an unknown flag is rejected" {
+    run cmd_pr_diff 7 --stats
+    [ "$status" -ne 0 ]
+    contains "$output" '*Unknown flag*'
+}
+
+@test "pr show: changes_requested is reported whoever raised it" {
+    stub_curl_seq 200 "$(pr_show_body '[
+        {"user":{"display_name":"Rev One"},"role":"REVIEWER","approved":false,"state":"changes_requested"},
+        {"user":{"display_name":"Drive By"},"role":"PARTICIPANT","approved":false,"state":"changes_requested"}]')" \
+                  200 '{"values":[]}'
+    run cmd_pr_show 7
+    [ "$status" -eq 0 ]
+    contains "$output" '*Changes requested by: Rev One, Drive By*'
+    # The underscore is opened out for reading, not printed raw.
+    contains "$output" '*Rev One (changes requested)*'
+}
+
 @test "pr approve: rejects non-numeric id in batch" {
     # The stub is load-bearing: without it `curl` is the REAL curl and this unit
     # test silently made a live call to api.bitbucket.org, reaching the second id
@@ -478,6 +590,52 @@ second line'
     run cmd_raw --text
     [ "$status" -ne 0 ]
     contains "$output" '*Usage: bbb raw*'
+}
+
+@test "raw-put: sends a PUT carrying the given body" {
+    stub_curl '{"id":5,"title":"t"}' 200
+    run cmd_raw_put "/pullrequests/5" '{"title":"t"}'
+    [ "$status" -eq 0 ]
+    contains "$(last_curl_call)" '*-X PUT*'
+    contains "$(last_curl_call)" '*{"title":"t"}*'
+    contains "$(last_curl_call)" '*/pullrequests/5*'
+}
+
+# api_delete is `curl -o /dev/null -w %{http_code}`, so these need
+# stub_curl_code — stub_curl would prepend a body and a newline to the status.
+@test "raw-delete: reports the status on success" {
+    stub_curl_code 204
+    run cmd_raw_delete "/pullrequests/5/comments/9"
+    [ "$status" -eq 0 ]
+    contains "$output" '*Deleted (HTTP 204)*'
+    contains "$(last_curl_call)" '*-X DELETE*'
+}
+
+@test "raw-delete: dies on a 4xx instead of exiting 0" {
+    # The whole point of the verb over pr delete-comment: a script under set -e
+    # and an agent reading the exit status must both see the failure without
+    # having to parse stdout.
+    stub_curl_code 403
+    run cmd_raw_delete "/pullrequests/5/comments/9"
+    [ "$status" -ne 0 ]
+    contains "$output" '*API error (HTTP 403)*'
+}
+
+@test "raw-delete: an empty status is fatal, not a silent success" {
+    # [[ "" -ge 400 ]] is FALSE, so without the guard a curl that exits 0 while
+    # printing nothing would report "Deleted (HTTP )" and exit 0. Same trap
+    # documented in api_get.
+    #
+    # Written inline rather than via stub_curl_code: that helper defaults a null
+    # argument back to 204 (${1:-204}), so it cannot express "no output at all".
+    cat >"$STUB_DIR/curl" <<EOF
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> "$STUB_DIR/.calls"
+EOF
+    chmod +x "$STUB_DIR/curl"
+    run cmd_raw_delete "/pullrequests/5/comments/9"
+    [ "$status" -ne 0 ]
+    contains "$output" '*no HTTP status*'
 }
 
 @test "pipeline log: URL-encodes braced UUIDs in path segments" {

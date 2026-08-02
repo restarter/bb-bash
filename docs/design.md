@@ -106,6 +106,18 @@ fi
 - All command functions run under `set -euo pipefail`
 - User-input-to-JSON always goes through `jq --arg` or `jq -Rs` (eliminates JSON-injection class of bugs)
 
+## Raw escape hatches: four verbs, not `--method=`
+
+`raw` (GET), `raw-post`, `raw-put` and `raw-delete` are separate commands rather than one `raw --method=<verb>`. The API helpers they wrap do not have a common shape: `api_put` returns a response body, while `api_delete` returns only an HTTP status code (`curl -o /dev/null -w "%{http_code}"`). A single `--method=` command would have to branch on the method internally to decide whether to pipe through `jq`, and would need a conditional argument count, since PUT takes a payload and DELETE does not. Separate verbs keep `require_args` exact per command and make the output difference visible in the help text instead of hiding it. A future PATCH would be added the same way.
+
+`raw-delete` **dies on HTTP >=400**, whereas `cmd_pr_delete_comment` prints `Failed to delete comment N (HTTP 404)` and exits `0`. Not an inconsistency to be flattened: `pr delete-comment` names a specific comment and can afford a friendly line, but the escape hatch has no domain context, and its callers — a shell script under `set -e`, or an agent reading the exit status rather than parsing stdout — need the failure in the exit code. (Whether `pr delete-comment` should also fail loudly is a separate question, deliberately left alone here.)
+
+## Shared renderers
+
+`render_diffstat <pr_id> [--totals]` is the single renderer for `/diffstat`, used by both `pr show` (file list) and `pr diff --stat` (totals + file list). It exists because the same rendering in two commands drifts: `pr show` already had the jq for it, and `--stat` would have been a second copy.
+
+Two decisions ride in it. It fetches **once** and renders both the totals and the list from that body, so a caller wanting both does not pay for the endpoint twice. And it requests `pagelen=100` (Bitbucket's cap) with a `.next` check, because the endpoint's default page silently truncated wide PRs. For a file list that is merely incomplete; for `--stat` it would be a *wrong number*, so the count is rendered as `100+` when more exist rather than a flat, confidently incorrect `100`. Same reasoning as the pipeline scan-window hint: do not print a figure the data does not support.
+
 ## Known constraints
 
 - **Token in process listings.** `curl -u email:token` puts credentials in process args, visible via `ps` on the same user. Acceptable for personal CLI; for shared systems use `curl --config -` pattern (deferred to `bb-bash-oja`).
