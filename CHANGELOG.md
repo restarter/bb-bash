@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `bbb pr update <id> --destination=<branch>` — retarget a PR's destination branch. Stacked PRs are a normal flow: PR #2 targets PR #1's branch, and once PR #1 merges, PR #2 has to be pointed at the real base or it merges somewhere that no longer receives commits. There was no native way to do it, so the workaround was a bare `curl` with the token on the command line. Bitbucket rejects a destination-only body, so the command reads the current title back and sends both — only the title, never the whole fetched object. Passing `--title` alongside skips the extra request. Verified live that unsent fields survive: description, assigned reviewers and participant approval states all come through a retarget untouched. (bb-bash-h5q)
 - `bbb pr request-changes <id> [id ...]` — mark a PR as **Changes Requested**, the normal non-destructive review outcome. The PR stays OPEN; only the caller's participant state changes. Previously the only native review verbs were `approve` and `decline`, and `decline` closes the PR — so recording "needs work" meant dropping to raw REST. Batch-capable like `approve`. (bb-bash-c6j)
 - `bbb pr unrequest-changes <id> [id ...]` — withdraw a Changes Requested mark once the author has pushed fixes. Batch-capable. (bb-bash-c6j)
 

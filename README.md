@@ -115,6 +115,7 @@ bbb pr merge 42 --squash --delete-branch
 
 bbb pr create main "Title" "Description"
 bbb pr update 42 --title="New title"
+bbb pr update 42 --destination=main       # retarget after the base PR merged
 bbb pr open 42                           # opens in browser
 
 bbb raw "/pullrequests"

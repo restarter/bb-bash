@@ -11,8 +11,8 @@
 # Usage (see usage() for the live list; this header summarizes):
 #   bbb pr list [--state=<s>] [--author=<u>]   - List PRs (default: open)
 #   bbb pr create <target> <title> [desc]      - Create PR from current branch
-#   bbb pr update <id> [--title=...] [--description=...] [--reviewers=u1,u2]
-#                                                 - Update PR metadata
+#   bbb pr update <id> [--title=...] [--description=...] [--reviewers=u1,u2] [--destination=<branch>]
+#                                                 - Update PR metadata; --destination retargets the PR
 #   bbb pr show <id>                           - PR details + changed files
 #   bbb pr open <id>                           - Open PR in default browser
 #   bbb pr diff <id>                           - Full diff
@@ -570,28 +570,35 @@ cmd_pr_create() {
         | jq -r '"PR #\(.id) created: \(.links.html.href)"'
 }
 
-# pr update <id> [--title=...] [--description=...] [--reviewers=user1,user2]
+# pr update <id> [--title=...] [--description=...] [--reviewers=user1,user2] [--destination=<branch>]
 # Reviewers list is FULL replacement (Bitbucket API has no PATCH semantics).
 # Reviewers passed as Bitbucket usernames; the API has been deprecating
 # username as a stable identifier — tracked in bb-api-oja for UUID migration.
+#
+# --destination retargets the PR. Stacked PRs need this: once the base PR
+# merges, its child still points at a branch that no longer receives commits.
 cmd_pr_update() {
-    require_args 1 $# "Usage: bbb pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2]"
+    require_args 1 $# "Usage: bbb pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2] [--destination=<branch>]"
     local pr_id="$1"
     require_numeric "PR id" "$pr_id"
     shift
-    local title="" desc="" reviewers=""
-    local title_set=0 desc_set=0 reviewers_set=0
+    local title="" desc="" reviewers="" dest=""
+    local title_set=0 desc_set=0 reviewers_set=0 dest_set=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --title=*)        title="${1#--title=}"; title_set=1 ;;
             --description=*)  desc="${1#--description=}"; desc_set=1 ;;
             --reviewers=*)    reviewers="${1#--reviewers=}"; reviewers_set=1 ;;
+            --destination=*)  dest="${1#--destination=}"; dest_set=1 ;;
             *)                die "Unknown flag: $1" ;;
         esac
         shift
     done
-    [[ $title_set -eq 1 || $desc_set -eq 1 || $reviewers_set -eq 1 ]] \
-        || die "Nothing to update (pass --title, --description, or --reviewers)"
+    [[ $title_set -eq 1 || $desc_set -eq 1 || $reviewers_set -eq 1 || $dest_set -eq 1 ]] \
+        || die "Nothing to update (pass --title, --description, --reviewers, or --destination)"
+    # An empty --destination= is a caller mistake, not a "clear the field" request:
+    # a PR always has a destination, so there is nothing to clear it to.
+    [[ $dest_set -eq 0 || -n "$dest" ]] || die "--destination requires a branch name"
 
     # Send the field if the flag was passed, even when the value is empty
     # (clearing description, for example). Previously empty values were
@@ -603,6 +610,27 @@ cmd_pr_update() {
         local arr
         arr=$(echo "$reviewers" | jq -Rc 'split(",") | map(select(length > 0)) | map({username: .})')
         payload=$(echo "$payload" | jq -c --argjson r "$arr" '. + {reviewers: $r}')
+    fi
+
+    # Bitbucket rejects a destination-only PUT: the body must carry a title. So a
+    # retarget reads the current title back and resends it.
+    #
+    # ONLY the title. PUT-ing the whole GET body would echo server-owned fields
+    # (state, links, author, merge_commit) back at the API and invite a 400. The
+    # fetch is conditional on purpose — plain --title/--description updates keep
+    # working through the partial PUT above, with no extra round trip.
+    if [[ $dest_set -eq 1 ]]; then
+        if [[ $title_set -eq 0 ]]; then
+            local current_title
+            # `// empty` is load-bearing: a bare `jq -r .title` on a missing or
+            # null field prints the literal string "null", which would then be
+            # written BACK as the title — the exact damage this read-back exists
+            # to prevent. Empty output plus the guard fails loudly instead.
+            current_title=$(api_get "/pullrequests/${pr_id}" | jq -r '.title // empty')
+            [[ -n "$current_title" ]] || die "could not read the current title of PR #${pr_id}"
+            payload=$(echo "$payload" | jq -c --arg t "$current_title" '. + {title: $t}')
+        fi
+        payload=$(echo "$payload" | jq -c --arg b "$dest" '. + {destination: {branch: {name: $b}}}')
     fi
 
     api_put "/pullrequests/${pr_id}" "$payload" \
@@ -1270,7 +1298,8 @@ usage() {
     echo "Usage:"
     echo "  bbb pr list [--state=open|merged|declined|superseded|all] [--author=<user>]   List PRs"
     echo "  bbb pr create <target> <title> [desc]        Create PR from current branch"
-    echo "  bbb pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2]  Update PR metadata"
+    echo "  bbb pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2] [--destination=<branch>]"
+    echo "                                               Update PR metadata (--destination retargets)"
     echo "  bbb pr show <id>                             PR details + changed files"
     echo "  bbb pr open <id>                             Open PR in default browser"
     echo "  bbb pr diff <id>                             Full diff"

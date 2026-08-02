@@ -50,6 +50,7 @@ bbb pr merge <id> [--squash|--commit|--ff] [--delete-branch]
 # Create / update
 bbb pr create <target_branch> "Title" "Description"
 bbb pr update <id> --title="New title" --description="..."
+bbb pr update <id> --destination=main            # retarget a stacked PR after its base merged
 
 # Browser escape hatch
 bbb pr open <id>

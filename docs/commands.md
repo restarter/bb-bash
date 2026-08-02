@@ -226,13 +226,26 @@ Pipelines are matched **client-side**. PR-triggered pipelines carry `target.sour
 
 ## pr update
 
-**Synopsis:** `bbb pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2]`
+**Synopsis:** `bbb pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2] [--destination=<branch>]`
 
 **Description:** Update PR metadata via PUT.
 
 **Required scopes:** `write:pullrequest:bitbucket`
 
 **Important:** `--reviewers` performs **full replacement** (not append) — Bitbucket API has no PATCH semantics for the reviewers array. Existing reviewers not in the new list are removed. Reviewers passed as Bitbucket usernames (UUID migration tracked in bb-bash-oja).
+
+**`--destination` retargets the PR** — the fix for stacked PRs. When PR #2 targets PR #1's branch and PR #1 merges into `main`, PR #2 must be pointed at `main` or it merges into a branch that no longer receives commits. Retargeting also shrinks `pr diff` back to the branch delta instead of replaying the merged base.
+
+```bash
+bbb pr update 2 --destination=main
+bbb pr show 2      # now reports "-> main"
+```
+
+`--destination` costs one extra request. Bitbucket rejects a destination-only body, so the command first GETs the PR to read its current title back and sends `{title, destination}` together. It resends **only** the title — echoing the whole fetched object would push server-owned fields (`state`, `links`, `author`, `merge_commit`) back at the API. Passing `--title` alongside `--destination` skips the read-back entirely. An empty `--destination=` is rejected rather than treated as "clear": a PR always has a destination.
+
+**Fields you do not pass are not lost.** Verified live: a retarget that sends only `{title, destination}` leaves the description, the assigned reviewers and every participant approval state untouched. Despite having no PATCH semantics for the reviewers *array*, this PUT does not blank unsent fields — `title` is simply mandatory on the request.
+
+**Example:** `bbb pr update 2 --destination=main --title="Now targets main"`
 
 ---
 
