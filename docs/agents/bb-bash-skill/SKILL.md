@@ -36,8 +36,9 @@ BB_BASH_WORKSPACE=myorg BB_BASH_REPO=myrepo bbb pr list
 bbb pr list                              # open PRs (default state)
 bbb pr list --state=merged --author=alice
 bbb pr list --state=all
-bbb pr show <id>                         # title, branches, author, files
+bbb pr show <id>                         # title, branches, author, files + review state
 bbb pr diff <id>                         # full unified diff
+bbb pr diff <id> --stat                  # size only: N files, +X -Y (never fetches the diff)
 bbb pr comments <id>                     # general + inline, with comment IDs
 bbb pr checks <id>                       # CI statuses + Pipelines (graceful-degrade if token lacks read:pipeline)
 bbb pr logs <id> [--step=N]              # newest pipeline's log; first failed step by default
@@ -87,7 +88,11 @@ bbb pr update <id> --destination=main     # retarget: stacked PR whose base alre
 bbb pr open <id>                         # opens in default browser
 bbb raw "/pullrequests/<id>"             # arbitrary GET
 bbb raw-post "/pullrequests/<id>/comments" '{"content":{"raw":"..."}}'  # arbitrary POST
+bbb raw-put "/pullrequests/<id>" '{"title":"t"}'                        # arbitrary PUT
+bbb raw-delete "/pullrequests/<id>/comments/<cid>"                      # arbitrary DELETE
 ```
+
+`raw-delete` exits non-zero on failure, so `set -e` and exit-status checks work. (`pr delete-comment` instead prints `Failed …` and exits 0 — check its output, not its status.)
 
 ## Workflow: review a PR
 

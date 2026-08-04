@@ -92,7 +92,8 @@ The agent already knows the commands because the install dropped a Rule + Skill 
 # From inside any bitbucket.org repo:
 bbb pr list                              # open PRs (default)
 bbb pr list --state=merged --author=alice
-bbb pr show 42
+bbb pr show 42                           # details + who reviewed and how
+bbb pr diff 42 --stat                    # size only, no full diff fetched
 bbb pr diff 42
 bbb pr checks 42                         # CI + pipelines status
 bbb pr logs 42                           # log of the newest pipeline for this PR
@@ -121,6 +122,8 @@ bbb pr open 42                           # opens in browser
 bbb raw "/pullrequests"
 bbb raw --text "/pipelines/%7B...%7D/steps/%7B...%7D/log"   # plain text, no jq
 bbb raw-post "/pullrequests/42/comments" '{"content":{"raw":"test"}}'
+bbb raw-put "/pullrequests/42" '{"title":"t","destination":{"branch":{"name":"main"}}}'
+bbb raw-delete "/pullrequests/42/comments/99"               # non-zero exit on failure
 ```
 
 Full command reference: [docs/commands.md](docs/commands.md).

@@ -15,7 +15,7 @@
 #                                                 - Update PR metadata; --destination retargets the PR
 #   bbb pr show <id>                           - PR details + changed files
 #   bbb pr open <id>                           - Open PR in default browser
-#   bbb pr diff <id>                           - Full diff
+#   bbb pr diff <id> [--stat]                  - Full diff; --stat: file count and +/- only
 #   bbb pr checks <id>                         - CI statuses + Bitbucket Pipelines
 #   bbb pr logs <id> [--step=N]                - Pipeline step log for a PR
 #   bbb pr comments <id>                       - List comments
@@ -35,6 +35,8 @@
 #   bbb pipeline log <build#> [--step=N]       - Pipeline step log by build number
 #   bbb raw [--text] <endpoint>                - Raw API call (GET; --text skips jq)
 #   bbb raw-post <endpoint> <json>             - Raw API call (POST)
+#   bbb raw-put <endpoint> <json>              - Raw API call (PUT)
+#   bbb raw-delete <endpoint>                  - Raw API call (DELETE; exits non-zero on failure)
 #   bbb install-agent [--rule] [--skill] [--claude] [--agents]
 #                                                 - Drop AI-agent integration artifacts into $PWD
 
@@ -637,25 +639,86 @@ cmd_pr_update() {
         | jq -r '"PR #\(.id) updated: \(.links.html.href // "ok")"'
 }
 
+# render_diffstat <pr_id> [--totals]
+# Print a PR per-file change list; with --totals, prefix the summary line.
+# Shared by `pr show` and `pr diff --stat` so the two renderings cannot drift.
+#
+# pagelen=100 is Bitbucket cap. Without it the endpoint default page silently
+# truncates a wide PR — survivable for a file list, not for a count. Hence both
+# the .next warning AND the "100+" form: a bare "100 files changed" with the
+# correction printed a hundred rows below is a wrong number with a footnote,
+# which is worse than the silent truncation this replaces. Same reasoning as the
+# pipeline scan-window hint.
+#
+# One fetch serves both renderings — callers get totals and list from the same
+# body rather than paying for the endpoint twice.
+render_diffstat() {
+    local pr_id="$1" totals=0
+    [[ "${2:-}" == "--totals" ]] && totals=1
+    local body
+    body=$(api_get "/pullrequests/${pr_id}/diffstat?pagelen=100")
+    if [[ $totals -eq 1 ]]; then
+        # SC2016: $n/$count/$a/$r are jq variables, not shell ones.
+        # shellcheck disable=SC2016
+        echo "$body" | jq -r '
+            ((.values | length) | tostring) as $n
+            | (if .next then $n + "+" else $n end) as $count
+            | ([.values[].lines_added]   | add // 0) as $a
+            | ([.values[].lines_removed] | add // 0) as $r
+            | "\($count) files changed, +\($a) -\($r)"'
+    fi
+    echo "$body" | jq -r '
+        .values[] | "\(.status | if . == "added" then "+" elif . == "removed" then "-" else "M" end) \(.new.path // .old.path)  (+\(.lines_added) -\(.lines_removed))"'
+    echo "$body" | jq -r 'if .next then "  (truncated at 100 files — this PR has more)" else empty end'
+}
+
 cmd_pr_show() {
     local pr_id="$1"
     require_numeric "PR id" "$pr_id"
     local pr
     pr=$(api_get "/pullrequests/${pr_id}")
 
-    echo "$pr" | jq -r '"PR #\(.id): \(.title)
-State:       \(.state)
-Author:      \(.author.display_name)
-Branch:      \(.source.branch.name) -> \(.destination.branch.name)
-Created:     \(.created_on // "n/a")
-Updated:     \(.updated_on // "n/a")
-Description: \(.description // "(none)")
-Link:        \(.links.html.href // "n/a")"'
+    # Review state rides the object already fetched above — participants[] carries
+    # {user, role, approved, state}, so this costs no extra request.
+    #
+    # Field values verified live (see bb-bash-h5q): state is "approved",
+    # "changes_requested", or an explicit null meaning no response yet; role is
+    # "REVIEWER" (assigned) or "PARTICIPANT" (acted without being assigned).
+    #
+    # Why the split: REVIEWER means ASSIGNED, not "reviewed". Someone who opens a
+    # PR unbidden and approves it lands in PARTICIPANT, so a REVIEWER-only view
+    # would report "no reviewers" on a PR that is already approved — the wrong
+    # answer to the only question worth asking before a merge. Assignment and
+    # verdict are therefore reported separately.
+    #
+    # SC2016: single quotes are required so bash leaves the program to jq. Never
+    # put an apostrophe in here, comments included — it closes the shell string.
+    # shellcheck disable=SC2016
+    echo "$pr" | jq -r '
+        def who: .user.display_name // .user.nickname // "?";
+        def shown: (.state // "no response") | gsub("_"; " ");
+        ([.participants[]? | select(.role == "REVIEWER")]) as $revs
+        | ([.participants[]? | select(.state == "changes_requested")]) as $blocking
+        | ([.participants[]? | select(.role != "REVIEWER" and .state == "approved")]) as $extra
+        | ([ "PR #\(.id): \(.title)",
+             "State:       \(.state)",
+             "Author:      \(.author.display_name)",
+             "Branch:      \(.source.branch.name) -> \(.destination.branch.name)",
+             "Reviewers:   " + (if ($revs | length) == 0 then "(none assigned)"
+                                else ($revs | map(who + " (" + shown + ")") | join(", ")) end),
+             "Changes requested by: " + (if ($blocking | length) == 0 then "-"
+                                         else ($blocking | map(who) | join(", ")) end) ]
+           + (if ($extra | length) == 0 then []
+              else ["Also approved by: " + ($extra | map(who + " (not assigned)") | join(", "))] end)
+           + [ "Created:     \(.created_on // "n/a")",
+               "Updated:     \(.updated_on // "n/a")",
+               "Description: \(.description // "(none)")",
+               "Link:        \(.links.html.href // "n/a")" ])
+        | join("\n")'
 
     echo ""
     echo "--- Changed files ---"
-    api_get "/pullrequests/${pr_id}/diffstat" | jq -r '
-        .values[] | "\(.status | if . == "added" then "+" elif . == "removed" then "-" else "M" end) \(.new.path // .old.path)  (+\(.lines_added) -\(.lines_removed))"'
+    render_diffstat "$pr_id"
 }
 
 # pr open <id> — open PR in default browser (macOS 'open', Linux 'xdg-open')
@@ -681,9 +744,25 @@ cmd_pr_open() {
     fi
 }
 
+# pr diff <id> [--stat]
+# --stat answers "how big is this PR" without downloading the diff to count it.
 cmd_pr_diff() {
+    require_args 1 $# "Usage: bbb pr diff <id> [--stat]"
     local pr_id="$1"
     require_numeric "PR id" "$pr_id"
+    shift
+    local stat=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --stat) stat=1 ;;
+            *)      die "Unknown flag: $1" ;;
+        esac
+        shift
+    done
+    if [[ $stat -eq 1 ]]; then
+        render_diffstat "$pr_id" --totals
+        return 0
+    fi
     curl -s -L -u "${AUTH}" \
         -H "Accept: text/plain" \
         "${BASE_URL}/pullrequests/${pr_id}/diff"
@@ -1155,6 +1234,35 @@ cmd_raw_post() {
     api_post "$endpoint" "$data" | jq '.'
 }
 
+cmd_raw_put() {
+    local endpoint="$1"
+    local data="$2"
+    api_put "$endpoint" "$data" | jq '.'
+}
+
+# raw-delete <endpoint>
+# api_delete returns the HTTP status, not a body, so unlike raw / raw-post there
+# is nothing to pipe through jq.
+#
+# This dies on >=400 where `pr delete-comment` prints "Failed ..." and exits 0.
+# Deliberate: delete-comment has domain context for a soft message ("comment 99
+# could not be deleted"), whereas this is the low-level escape hatch, and a
+# script running under `set -e` — or an agent checking the exit status instead
+# of parsing stdout — has to be able to see the failure.
+cmd_raw_delete() {
+    local endpoint="$1"
+    local status
+    status=$(api_delete "$endpoint")
+    # An empty status means curl produced no code. See api_get, where the same
+    # trap is spelled out: [[ "" -ge 400 ]] is FALSE and would sail straight
+    # through the check below.
+    [[ -n "$status" ]] || die "no HTTP status from DELETE $endpoint"
+    if [[ "$status" -ge 400 ]]; then
+        die "API error (HTTP $status): DELETE $endpoint"
+    fi
+    echo "Deleted (HTTP ${status})"
+}
+
 # install-agent: drop AI-agent integration artifacts into $PWD.
 # Flags combine; no flag = interactive prompt (letter codes).
 # Unlike pr/raw commands this one doesn't hit Bitbucket and is allowed to
@@ -1302,7 +1410,7 @@ usage() {
     echo "                                               Update PR metadata (--destination retargets)"
     echo "  bbb pr show <id>                             PR details + changed files"
     echo "  bbb pr open <id>                             Open PR in default browser"
-    echo "  bbb pr diff <id>                             Full diff"
+    echo "  bbb pr diff <id> [--stat]                    Full diff (--stat: file count and +/- only)"
     echo "  bbb pr checks <id>                           Show CI statuses + Bitbucket Pipelines"
     echo "  bbb pr logs <id> [--step=N]                  Pipeline step log for a PR"
     echo "  bbb pr comments <id>                         List comments"
@@ -1319,6 +1427,8 @@ usage() {
     echo "  bbb pipeline log <build#> [--step=N]         Pipeline step log by build number"
     echo "  bbb raw [--text] <endpoint>                  Raw GET  (--text skips jq, e.g. for logs)"
     echo "  bbb raw-post <endpoint> <json>               Raw POST"
+    echo "  bbb raw-put <endpoint> <json>                Raw PUT"
+    echo "  bbb raw-delete <endpoint>                    Raw DELETE (exits non-zero on failure)"
     echo "  bbb install-agent [--rule] [--skill] [--claude] [--agents] [--dry-run] [--force]"
     echo "                                                  Drop AI-agent integration artifacts into \$PWD"
     echo ""
@@ -1360,7 +1470,7 @@ main() {
                 update)         cmd_pr_update "$@" ;;
                 show)           require_args 1 $# "Usage: bbb pr show <id>"; cmd_pr_show "$1" ;;
                 open)           cmd_pr_open "$@" ;;
-                diff)           require_args 1 $# "Usage: bbb pr diff <id>"; cmd_pr_diff "$1" ;;
+                diff)           cmd_pr_diff "$@" ;;
                 checks)         cmd_pr_checks "$@" ;;
                 logs)           cmd_pr_logs "$@" ;;
                 comments)       require_args 1 $# "Usage: bbb pr comments <id>"; cmd_pr_comments "$1" ;;
@@ -1391,6 +1501,8 @@ main() {
             ;;
         raw)           require_args 1 $# "Usage: bbb raw [--text] <endpoint>"; cmd_raw "$@" ;;
         raw-post)      require_args 2 $# "Usage: bbb raw-post <endpoint> <json>"; cmd_raw_post "$1" "$2" ;;
+        raw-put)       require_args 2 $# "Usage: bbb raw-put <endpoint> <json>"; cmd_raw_put "$1" "$2" ;;
+        raw-delete)    require_args 1 $# "Usage: bbb raw-delete <endpoint>"; cmd_raw_delete "$1" ;;
         install-agent) cmd_install_agent "$@" ;;
         help)          usage ;;
         *)             usage; exit 1 ;;
