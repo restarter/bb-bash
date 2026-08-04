@@ -76,7 +76,10 @@ bbb pr create <target_branch> "Title" "Description"
 bbb pr update <id> --title="New title"
 bbb pr update <id> --description="New body"
 bbb pr update <id> --reviewers=alice,bob
+bbb pr update <id> --destination=main     # retarget: stacked PR whose base already merged
 ```
+
+`--destination` is the one to reach for after merging the base of a stack — without it the child PR still targets a branch that no longer receives commits, and its diff replays the merged base. Costs one extra GET (Bitbucket rejects a destination-only body, so the current title is read back and resent); pass `--title` alongside to skip it.
 
 ### Escape hatch
 

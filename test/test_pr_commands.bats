@@ -262,6 +262,46 @@ teardown() {
     not_contains "$(last_curl_call)" '*"username":""*'
 }
 
+# --destination makes TWO calls (GET the title, then PUT), so these need
+# stub_curl_seq — a single-shot stub_curl hands the same body to both and the
+# assertion would pass for the wrong reason.
+@test "pr update: --destination alone reads the current title and sends both" {
+    stub_curl_seq 200 '{"id":5,"title":"Existing title"}' \
+                  200 '{"id":5,"links":{"html":{"href":"http://x"}}}'
+    run cmd_pr_update 5 --destination=main
+    [ "$status" -eq 0 ]
+    contains "$(nth_curl_call 1)" '*/pullrequests/5*'
+    contains "$(nth_curl_call 2)" '*"title":"Existing title"*'
+    contains "$(nth_curl_call 2)" '*"destination":{"branch":{"name":"main"}}*'
+}
+
+@test "pr update: --destination with --title does not re-read the PR" {
+    stub_curl '{"id":5,"links":{"html":{"href":"http://x"}}}' 200
+    run cmd_pr_update 5 --destination=main --title="Explicit title"
+    [ "$status" -eq 0 ]
+    # The very first call is already the PUT: no title read-back was needed.
+    contains "$(nth_curl_call 1)" '*"title":"Explicit title"*'
+    contains "$(nth_curl_call 1)" '*"destination":{"branch":{"name":"main"}}*'
+    [ -z "$(nth_curl_call 2)" ]
+}
+
+@test "pr update: --destination dies when the current title cannot be read" {
+    # Regression pin for the `// empty` guard. Without it jq returns the literal
+    # string "null" and the retarget would OVERWRITE the title with it.
+    stub_curl_seq 200 '{"id":5}'
+    run cmd_pr_update 5 --destination=main
+    [ "$status" -ne 0 ]
+    contains "$output" '*could not read the current title*'
+    # And no PUT was attempted.
+    [ -z "$(nth_curl_call 2)" ]
+}
+
+@test "pr update: --destination with an empty value is rejected" {
+    run cmd_pr_update 5 --destination=
+    [ "$status" -ne 0 ]
+    contains "$output" '*--destination requires a branch name*'
+}
+
 @test "pr list: --state=foo rejected" {
     run cmd_pr_list --state=foo
     [ "$status" -ne 0 ]
