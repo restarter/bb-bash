@@ -12,11 +12,19 @@
 
 load test_helper
 
-ARTIFACTS=(
-    "docs/agents/bb-bash-rule.md"
-    "docs/agents/bb-bash-snippet.md"
-    "docs/agents/bb-bash-skill/SKILL.md"
-)
+# artifact_files — the shipped artifacts, DISCOVERED rather than listed: every
+# .md under docs/agents/ except README.md, which is the index explaining them
+# rather than one of them.
+#
+# Discovery so that a fourth artifact is covered the moment it lands. A literal
+# list here would have been one more place to forget — the same failure this
+# suite exists to catch, one level up from the artifacts themselves.
+#
+# Paths are repo-relative, as assert_artifact_covers and the messages expect.
+artifact_files() {
+    find "$BB_BASH_ROOT/docs/agents" -name '*.md' ! -name 'README.md' \
+        | sed "s|^$BB_BASH_ROOT/||" | sort
+}
 
 # Deliberate exemptions. Every entry MUST carry its reason inline — an allowlist
 # without reasons becomes the place drift hides, which would defeat the point.
@@ -69,16 +77,12 @@ assert_artifact_covers() {
     fi
 }
 
-@test "agent artifacts: bb-bash-rule.md covers every router command" {
-    assert_artifact_covers "docs/agents/bb-bash-rule.md"
-}
-
-@test "agent artifacts: bb-bash-snippet.md covers every router command" {
-    assert_artifact_covers "docs/agents/bb-bash-snippet.md"
-}
-
-@test "agent artifacts: SKILL.md covers every router command" {
-    assert_artifact_covers "docs/agents/bb-bash-skill/SKILL.md"
+@test "agent artifacts: every artifact covers every router command" {
+    local rel failed=0
+    while IFS= read -r rel; do
+        assert_artifact_covers "$rel" || failed=1
+    done < <(artifact_files)
+    [ "$failed" -eq 0 ]
 }
 
 # The three tests above are only as good as the parser feeding them. If the
@@ -116,13 +120,30 @@ pr
     # install-agent drops a COPY into someone else's project; they upgrade bbb
     # months later and that copy stays frozen. No discipline in this repo fixes
     # that — only a pointer to the live binary self-heals across version skew.
-    local rel
-    for rel in "${ARTIFACTS[@]}"; do
+    local rel failed=0
+    while IFS= read -r rel; do
         grep -qF -- "bbb help" "$BB_BASH_ROOT/$rel" || {
             echo "$rel does not mention 'bbb help'." >&2
             echo "Each artifact needs it as the freshness check: a reader whose" >&2
             echo "installed bbb is newer than their copy has no other way to find out." >&2
-            return 1
+            failed=1
         }
-    done
+    done < <(artifact_files)
+    [ "$failed" -eq 0 ]
+}
+
+# Discovery is now load-bearing for both tests above: if artifact_files stops
+# finding things — moved directory, renamed files — they pass while checking
+# nothing at all.
+@test "agent artifacts: discovery finds the artifacts that actually ship" {
+    run artifact_files
+    [ "$status" -eq 0 ]
+    contains "$output" '*docs/agents/bb-bash-rule.md*'
+    contains "$output" '*docs/agents/bb-bash-snippet.md*'
+    contains "$output" '*docs/agents/bb-bash-skill/SKILL.md*'
+    # README.md is the index that explains the artifacts, not one of them.
+    not_contains "$output" '*README*'
+    local n
+    n=$(artifact_files | wc -l | tr -d ' ')
+    [ "$n" -ge 3 ] || { echo "discovery returned only $n artifacts" >&2; return 1; }
 }

@@ -1316,14 +1316,14 @@ mode operates on the current project only.
 
 Env:
   BB_BASH_REF   Git ref to fetch artifacts from (default: main).
-               Pin to a release tag for reproducibility, e.g. BB_BASH_REF=v0.2.0.
+               Pin to a release tag for reproducibility, e.g. BB_BASH_REF=v0.3.0.
 
 Examples:
   bbb install-agent --rule --skill                  # project-level Claude Code
   bbb install-agent --rule --global                 # user-global rule (every project)
   bbb install-agent --rule --skill --global         # global rule + skill
   bbb install-agent --claude --dry-run              # preview snippet append
-  BB_BASH_REF=v0.2.0 bbb install-agent --rule       # pin to a release tag
+  BB_BASH_REF=v0.3.0 bbb install-agent --rule       # pin to a release tag
 EOF
                 return 0
                 ;;

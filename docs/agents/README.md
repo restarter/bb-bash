@@ -37,7 +37,7 @@ bbb install-agent --rule --skill --global        # both, globally
 ### Pin to a release tag
 
 ```bash
-BB_BASH_REF=v0.2.0 bbb install-agent --rule --skill
+BB_BASH_REF=v0.3.0 bbb install-agent --rule --skill
 ```
 
 See [README → For AI agents](../../README.md#for-ai-agents) for the high-level overview, or [commands.md → install-agent](../commands.md#install-agent) for the full flag reference.

@@ -30,7 +30,17 @@ git checkout main && git pull --ff-only
 git checkout -b release/v0.3.0
 ```
 
-### 2. Promote `[Unreleased]` in `CHANGELOG.md`
+### 2. Refresh the version examples
+
+Several places show a pinned tag as an *example*, and nothing breaks when they fall behind — which is precisely why they do. They read as "the current release" to anyone skimming:
+
+```bash
+grep -rn 'BB_BASH_REF=v' bbb README.md docs/
+```
+
+Bump each to the version being cut. There are six as of `v0.3.0` (`bbb` ×2, `README.md`, `docs/installation.md`, `docs/commands.md`, `docs/agents/README.md`); check rather than assume the count.
+
+### 3. Promote `[Unreleased]` in `CHANGELOG.md`
 
 Insert a new version heading below `## [Unreleased]` and leave `[Unreleased]` in place, empty, for the next cycle:
 
@@ -42,7 +52,7 @@ Insert a new version heading below `## [Unreleased]` and leave `[Unreleased]` in
 
 Entries themselves do not move — the heading is inserted above them. There are no link-reference footers to maintain in this file.
 
-### 3. Commit
+### 4. Commit
 
 ```bash
 git commit -m "chore: bump CHANGELOG for v0.3.0 release"
@@ -50,7 +60,7 @@ git commit -m "chore: bump CHANGELOG for v0.3.0 release"
 
 The body should say what is being promoted and why the number is minor or patch. See `5397231` for the shape.
 
-### 4. PR, wait for CI, merge
+### 5. PR, wait for CI, merge
 
 ```bash
 git push -u origin release/v0.3.0
@@ -63,7 +73,7 @@ gh pr merge <N> --merge --delete-branch
 
 Do not merge on red CI. A release is the one place where "it is probably fine" costs the most, because the tag is immutable in practice once anyone has installed from it.
 
-### 5. Tag the merge commit
+### 6. Tag the merge commit
 
 ```bash
 git checkout main && git pull --ff-only
@@ -73,7 +83,7 @@ git push origin v0.3.0
 
 Annotated (`-a`), on the **merge commit** — that is the commit whose tree contains the promoted CHANGELOG, and the tree the raw fetch above will serve.
 
-### 6. Create the GitHub release
+### 7. Create the GitHub release
 
 ```bash
 gh release create v0.3.0 --title "v0.3.0 — short descriptor" --notes "..."
@@ -83,7 +93,7 @@ Title convention: `vX.Y.Z — <what changed, in a few words>`.
 
 Release notes are for **users**, not reviewers. Lead with what they can now do — one runnable command per feature, the output where it is not obvious, and a line on what it replaces. Rationale, trade-offs and API findings belong in the CHANGELOG and the PRs, which is where someone goes when they want the reasoning. If the notes read like a design document, they are wrong.
 
-### 7. Verify what the installer will serve
+### 8. Verify what the installer will serve
 
 Do not skip this. It is the only step that checks the thing users actually touch:
 
