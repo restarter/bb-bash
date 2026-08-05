@@ -1431,6 +1431,7 @@ usage() {
     echo "  bbb raw-delete <endpoint>                    Raw DELETE (exits non-zero on failure)"
     echo "  bbb install-agent [--rule] [--skill] [--claude] [--agents] [--dry-run] [--force]"
     echo "                                                  Drop AI-agent integration artifacts into \$PWD"
+    echo "  bbb help                                     Show this help (no .env or Bitbucket repo needed)"
     echo ""
     echo "Inline comments: omit --old for new/added lines, include --old for deleted lines."
     echo ""

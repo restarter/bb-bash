@@ -291,6 +291,18 @@ Four separate verbs rather than one `raw --method=`: `api_delete` returns a stat
 
 ---
 
+## help
+
+**Synopsis:** `bbb help` (also `bbb -h`, `bbb --help`, or `bbb` with no arguments)
+
+**Description:** Print the command list and the configuration reference for the installed version.
+
+**Required scopes:** none — this command short-circuits credential and repo resolution, so it works without a `.env` and outside a Bitbucket repository.
+
+Worth knowing for AI agents: the artifacts under `docs/agents/` are **copies** dropped into a project by `install-agent`, and `bbb` may have been upgraded since. `bbb help` is the source of truth for what the installed binary actually accepts. `test/test_agent_artifacts.bats` asserts it lists every command the router defines.
+
+---
+
 ## install-agent
 
 **Synopsis:**

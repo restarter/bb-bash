@@ -47,7 +47,7 @@ Skipped by default.
 4. Update `README.md` Usage section + add a full entry in [`docs/commands.md`](commands.md)
 5. Add bats tests in `test/test_pr_commands.bats` — **assert both** response parsing AND outbound payload (via `last_curl_call`)
 6. Add a line to `CHANGELOG.md [Unreleased]`
-7. Reflect the command and any new caveat in **all three** AI artifacts — [`bb-bash-rule.md`](agents/bb-bash-rule.md), [`bb-bash-snippet.md`](agents/bb-bash-snippet.md), [`bb-bash-skill/SKILL.md`](agents/bb-bash-skill/SKILL.md). They are deliberately kept at factual parity so a user can pick any one; see [`agents/README.md`](agents/README.md). **Enforced:** `test/test_agent_artifacts.bats` parses the router and fails when a command is missing from any artifact — so forgetting this step shows up as a red suite, not as a stale file. It checks presence only; a new caveat still has to be written by hand
+7. Reflect the command and any new caveat in **all three** AI artifacts — [`bb-bash-rule.md`](agents/bb-bash-rule.md), [`bb-bash-snippet.md`](agents/bb-bash-snippet.md), [`bb-bash-skill/SKILL.md`](agents/bb-bash-skill/SKILL.md). They are deliberately kept at factual parity so a user can pick any one; see [`agents/README.md`](agents/README.md). **Enforced:** `test/test_agent_artifacts.bats` parses the router and fails when a command is missing from any artifact — so forgetting this step shows up as a red suite, not as a stale file. It also checks the reverse (no artifact may teach a command the router does not define) and that `bbb help` lists everything. It does NOT check wording: a new caveat still has to be written by hand. A command that deliberately does not belong in the artifacts gets an entry with its reason in `artifact_exempt()`; a new artifact file must also carry the `bbb help` pointer
 8. If the command touched a shared helper or established a new pattern, update [`docs/design.md`](design.md) (the decision and any caveat) and this file (the pattern a contributor copies). Steps 1-7 all describe the command; these two describe the machinery behind it, and drift here stays invisible until someone writes the next command against a stale rule
 
 ## Code style
@@ -110,12 +110,16 @@ Always capture outbound payload to catch wrong-field bugs. The `last_curl_call` 
 
 For multi-call commands (`pr checks` makes 3 API calls; `pr logs` makes 4; `pr merge` may make 2) use `stub_curl_seq`. Queue depth is itself an assertion — the stub exits 99 when a command asks for more responses than were queued, so an under-queued sequence fails loudly rather than silently returning empty:
 
+Arguments are `<code> <body>` **pairs**, in call order; an odd count is rejected outright:
+
 ```bash
 stub_curl_seq \
-    '{"first":"response"}|||200' \
-    '{"second":"response"}|||200' \
-    '{"error":{"message":"x"}}|||403'
+    200 '{"first":"response"}' \
+    200 '{"second":"response"}' \
+    403 '{"error":{"message":"x"}}'
 ```
+
+For an `api_delete`-style call — `curl -o /dev/null -w "%{http_code}"`, where real curl prints only the status — use `stub_curl_code` / `stub_curl_code_seq` instead. `stub_curl` ignores `-o` and always emits `body\n<code>`, so the caller would capture a leading newline and every status comparison would fail.
 
 ## Coverage
 
@@ -149,14 +153,7 @@ Pre-rename commits in git history use the older `bb-api-XXX` scope (immutable). 
 
 `scripts/install.sh` — the curl-pipe-bash installer. Shellchecked in CI alongside `bbb`. Pure-function helpers (`pick_install_dir`, `path_contains`, `extract_tag_name`, `_resolve_symlink_chain`, `find_bbb_on_path`) covered by `test/test_install_helpers.bats`. The `resolve_script_dir` helper in `bbb` (used at startup to anchor `.env` discovery through symlinks) is covered by `test/test_script_dir.bats`.
 
-When bumping a release:
-
-1. Land features on main under `[Unreleased]`.
-2. Rename `[Unreleased]` → `[X.Y.Z] - YYYY-MM-DD` and open a fresh empty `[Unreleased]`.
-3. `git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`
-4. Build release notes with `awk '/^## \[X\.Y\.Z\]/{p=1; next} /^## \[/{p=0} p' CHANGELOG.md > /tmp/notes.md`, validate non-empty (`[ -s /tmp/notes.md ]`), then `gh release create vX.Y.Z --notes-file /tmp/notes.md`.
-
-Users picking up `curl ... | bash` get the new tag automatically — the installer queries `/releases/latest` and SemVer-whitelists the tag before fetching.
+Cutting a release: see [`docs/releasing.md`](releasing.md). It is the single authoritative copy — a second procedure used to live here and drifted apart from it.
 
 ## A note on `.env`
 

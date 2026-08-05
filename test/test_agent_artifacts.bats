@@ -85,10 +85,10 @@ assert_artifact_covers() {
     [ "$failed" -eq 0 ]
 }
 
-# The three tests above are only as good as the parser feeding them. If the
-# router's indentation changes, bbb_command_surface silently returns a short
-# list — or nothing — and they all pass while covering nothing. These pin that
-# down, so a broken extractor fails loudly instead of going quietly green.
+# The test above is only as good as the parser feeding it. If the router's
+# indentation changes, bbb_command_surface silently returns a short list — or
+# nothing — and it passes while covering nothing. The rest of this file pins the
+# parser down, so a broken extractor fails loudly instead of going quietly green.
 @test "command surface: the parser finds the commands it should" {
     run bbb_command_surface
     [ "$status" -eq 0 ]
@@ -97,21 +97,61 @@ assert_artifact_covers() {
     contains "$output" '*pipeline log*'
     contains "$output" '*raw-delete*'
     contains "$output" '*install-agent*'
-    # Group prefixes are not commands — their subcommands stand in for them.
-    not_contains "$output" '*
-pr
-*'
 }
 
-@test "command surface: the parser returns a plausible number of commands" {
-    # A wrong-but-nonzero count is the failure mode that would slip past the
-    # spot checks above: a parser matching only part of the router still finds
-    # `pr show`. bbb has had 20+ commands since v0.2.0 and only grows.
-    local n
-    n=$(bbb_command_surface | wc -l | tr -d ' ')
-    [ "$n" -ge 20 ] || {
-        echo "bbb_command_surface returned only $n commands — the router parser" >&2
-        echo "in test_helper.bash is probably out of step with bbb's layout." >&2
+@test "command surface: group prefixes never leak in as commands" {
+    # Matched per LINE, not as a glob over the joined output. The previous form
+    # — not_contains "$output" '*\npr\n*' — could not fail: it needs a newline
+    # BEFORE `pr`, and `pr)` is the FIRST arm in the router, so a regressed
+    # filter puts `pr` on line 1 with nothing in front of it. `pipeline` was not
+    # checked at all. not_contains fails open, exactly as test_helper.bash warns.
+    local leaked
+    leaked=$(bbb_command_surface | grep -cxE 'pr|pipeline' || true)
+    [ "$leaked" -eq 0 ] || {
+        echo "group prefixes leaked into the command surface ($leaked)" >&2
+        echo "They are prefixes, not runnable commands — bare 'bbb pr' prints usage." >&2
+        return 1
+    }
+}
+
+@test "command surface: accounts for every arm the router declares" {
+    # The invariant that closes the CLASS of parser bug: surface == arms - groups.
+    # Arms are counted at ANY depth, so anything the surface cannot reach shows up
+    # as a shortfall rather than as quiet under-coverage. Two real escapes it
+    # catches: an alternation arm (`a|b)`) the surface regex once skipped, and a
+    # third command group whose nested `case` the surface does not know about —
+    # both of which previously left the whole suite green.
+    local surface arms groups expected
+    surface=$(bbb_command_surface | wc -l | tr -d ' ')
+    arms=$(bbb_router_arm_count)
+    groups=$(bbb_router_group_count)
+    expected=$((arms - groups))
+    [ "$surface" -eq "$expected" ] || {
+        echo "command surface does not account for the router." >&2
+        echo "  surface entries : $surface" >&2
+        echo "  router arms     : $arms (any depth)" >&2
+        echo "  command groups  : $groups (nested case blocks)" >&2
+        echo "  expected        : $expected  (arms - groups)" >&2
+        echo "" >&2
+        echo "A shortfall means bbb_command_surface in test/test_helper.bash cannot" >&2
+        echo "see some arm shape or nesting the router now uses — extend the parser." >&2
+        echo "A new command group needs its own line there; without it, every one of" >&2
+        echo "its subcommands is silently exempt from the artifact-drift check." >&2
+        return 1
+    }
+}
+
+@test "command surface: every tier is populated" {
+    # A bare total hides a whole tier vanishing. The old `-ge 20` floor was the
+    # exact residue of losing the top-level tier: 6 top + 19 pr + 1 pipeline = 26,
+    # and 19 + 1 = 20 still passed it. Counted per tier, one cannot cover for
+    # another.
+    local top prs pipe
+    top=$(bbb_command_surface | grep -cvE '^(pr|pipeline) ' || true)
+    prs=$(bbb_command_surface | grep -cE '^pr ' || true)
+    pipe=$(bbb_command_surface | grep -cE '^pipeline ' || true)
+    [ "$top" -ge 5 ] && [ "$prs" -ge 15 ] && [ "$pipe" -ge 1 ] || {
+        echo "a command tier looks empty or truncated: top=$top pr=$prs pipeline=$pipe" >&2
         return 1
     }
 }
@@ -129,6 +169,55 @@ pr
             failed=1
         }
     done < <(artifact_files)
+    [ "$failed" -eq 0 ]
+}
+
+# Prose that reads as a command to the extractor below. Kept tiny and explicit:
+# if a new phrase lands here, prefer rewording the artifact over growing the list.
+artifact_prose_noise() {
+    case "$1" in
+        "may have"|"not on") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+@test "agent artifacts: no artifact teaches a command that does not exist" {
+    # Drift runs both ways. The coverage test above is router -> artifact; without
+    # this one, renaming a command and adding the new name leaves every artifact
+    # still teaching the old one, suite green. For a file whose whole job is
+    # telling an agent what to run, a confidently documented dead command is worse
+    # than a missing one — the agent will not consult `bbb help`, because it
+    # already has a plan that looks like it works.
+    local surface rel cand failed=0
+    surface=$(bbb_command_surface)
+    while IFS= read -r rel; do
+        while IFS= read -r cand; do
+            [ -n "$cand" ] || continue
+            artifact_prose_noise "$cand" && continue
+            printf '%s\n' "$surface" | grep -qxF "$cand" || {
+                echo "$rel documents 'bbb $cand', which the router does not define." >&2
+                failed=1
+            }
+        done < <(grep -oE 'bbb [a-z][a-z-]*( [a-z][a-z-]*)?' "$BB_BASH_ROOT/$rel" \
+                   | sed 's/^bbb //' | sort -u)
+    done < <(artifact_files)
+    [ "$failed" -eq 0 ]
+}
+
+@test "bbb help lists every command the router defines" {
+    # The artifacts now point at `bbb help` as the source of truth for what the
+    # installed binary accepts — the answer to a frozen copy going stale. That
+    # promise is only as good as usage(), which was itself kept in sync by
+    # remembering step 3 of the checklist: the same rule this suite replaces.
+    local cmd failed=0 out
+    out=$("$BB_BASH_SCRIPT" help 2>&1)
+    while IFS= read -r cmd; do
+        [ -n "$cmd" ] || continue
+        case "$out" in
+            *"bbb $cmd"*) ;;
+            *) echo "bbb help does not list 'bbb $cmd' — usage() is behind the router." >&2; failed=1 ;;
+        esac
+    done < <(bbb_command_surface)
     [ "$failed" -eq 0 ]
 }
 

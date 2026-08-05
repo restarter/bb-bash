@@ -39,7 +39,7 @@ bbb pr inline <id> path/to/file 42 "comment on new code"
 bbb pr inline --old <id> path/to/file 10 "comment on deleted code"
 bbb pr reply <pr_id> <comment_id> "reply text"
 bbb pr edit-comment <pr_id> <comment_id> "updated text"     # own comments only
-bbb pr delete-comment <pr_id> <comment_id>                  # own comments only
+bbb pr delete-comment <pr_id> <comment_id>                  # own comments only; prints "Failed ..." and EXITS 0 — check output, not status
 
 # Approve / request changes / decline / merge
 bbb pr approve <id> [<id> ...]           # batch-capable

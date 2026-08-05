@@ -29,17 +29,54 @@ export BB_BASH_SCRIPT="${BB_BASH_SCRIPT:-${BB_BASH_ROOT}/bbb}"
 # SC2016: the `$` in the sed addresses is sed's own literal, matching `"$cmd"`
 # in the router text — single quotes are required so bash leaves it alone.
 # shellcheck disable=SC2016
+# The arm classes accept `|` so an alternation arm (`rc|request-changes)`, the
+# first shape anyone reaches for when adding an alias, and already idiomatic at
+# bbb:499 / :1287 / :1527) is matched and then split into its separate commands.
+# A `)`-only class silently skipped such arms entirely — the commands never
+# entered the surface and the drift tests passed while covering nothing.
 bbb_command_surface() {
     local src="${1:-$BB_BASH_SCRIPT}"
     # Top-level verbs. `pr` and `pipeline` are group prefixes, not commands —
     # their subcommands are enumerated below instead.
     sed -n '/^    case "\$cmd" in/,/^    esac/p' "$src" \
-        | grep -oE '^        [a-z][a-z-]*\)' | tr -d ' )' \
+        | grep -oE '^        [a-z][a-z|-]*\)' | tr -d ' )' | tr '|' '\n' \
         | grep -vE '^(pr|pipeline)$'
     sed -n '/case "\$subcmd" in/,/esac/p' "$src" \
-        | grep -oE '^ +[a-z][a-z-]*\)' | tr -d ' )' | sed 's/^/pr /'
+        | grep -oE '^ +[a-z][a-z|-]*\)' | tr -d ' )' | tr '|' '\n' | sed 's/^/pr /'
     sed -n '/case "\$psubcmd" in/,/esac/p' "$src" \
-        | grep -oE '^ +[a-z][a-z-]*\)' | tr -d ' )' | sed 's/^/pipeline /'
+        | grep -oE '^ +[a-z][a-z|-]*\)' | tr -d ' )' | tr '|' '\n' | sed 's/^/pipeline /'
+}
+
+# bbb_router_arm_count — how many command NAMES the router declares, counted at
+# ANY nesting depth (`*)` excluded, alternation arms split like the surface does).
+#
+# The independence that matters is the depth rule, not the splitting: this scans
+# every indentation level, while bbb_command_surface only scans the levels it
+# knows about. So arms the surface cannot reach still get counted here.
+#
+# The accounting invariant it feeds — surface == arms - groups — closes the CLASS
+# of parser bug rather than one instance. Two escapes passed silently before it
+# existed: an alternation arm the surface regex did not match, and a third command
+# group whose nested `case` the surface does not know about. Either now shows up
+# as a count mismatch instead of as quiet under-coverage.
+# shellcheck disable=SC2016
+bbb_router_arm_count() {
+    local src="${1:-$BB_BASH_SCRIPT}"
+    sed -n '/^    case "\$cmd" in/,/^    esac/p' "$src" \
+        | grep -oE '^ +[a-z][a-z|-]*\)' | tr -d ' )' | tr '|' '\n' | grep -c .
+}
+
+# bbb_router_group_count — nested `case` blocks inside the router, i.e. command
+# GROUPS (`pr`, `pipeline`). Their top-level arm is a prefix, not a command, so
+# each one costs the surface exactly one entry against the arm count.
+#
+# The 8-space floor excludes the router's own `case "$cmd" in`, which sits at 4
+# and would otherwise be counted as a group and skew the invariant by one.
+# shellcheck disable=SC2016
+bbb_router_group_count() {
+    local src="${1:-$BB_BASH_SCRIPT}"
+    sed -n '/^    case "\$cmd" in/,/^    esac/p' "$src" \
+        | grep -cE '^ {8,}case "\$[a-z]+" in'
 }
 
 # load_bbb: source bbb (function definitions only — the top-level
