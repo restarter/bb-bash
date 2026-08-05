@@ -7,7 +7,40 @@
 # linter stays useful for the rest of the file.
 
 # Locate script path
-export BB_BASH_SCRIPT="${BB_BASH_SCRIPT:-$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)/bbb}"
+export BB_BASH_ROOT="${BB_BASH_ROOT:-$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)}"
+export BB_BASH_SCRIPT="${BB_BASH_SCRIPT:-${BB_BASH_ROOT}/bbb}"
+
+# bbb_command_surface — the user-facing command surface, one entry per line
+# ("pr show", "pipeline log", "raw-put"), parsed out of the router in bbb.
+#
+# PARSED, never hard-coded. A literal list here would be a fourth copy of the
+# command surface for someone to forget — which is the exact failure the
+# artifact-drift tests exist to catch.
+#
+# Parsed from the file rather than enumerated from a sourced shell because the
+# router is a `case` inside main(): sourcing bbb gives you the functions, not
+# the dispatch table.
+#
+# Depends on the router's indentation — top-level arms at 8 spaces, nested
+# subcommand arms at 16. If that ever changes this quietly returns a short list
+# and the drift tests pass for the wrong reason, so test_agent_artifacts.bats
+# pins both the count and a couple of known entries.
+#
+# SC2016: the `$` in the sed addresses is sed's own literal, matching `"$cmd"`
+# in the router text — single quotes are required so bash leaves it alone.
+# shellcheck disable=SC2016
+bbb_command_surface() {
+    local src="${1:-$BB_BASH_SCRIPT}"
+    # Top-level verbs. `pr` and `pipeline` are group prefixes, not commands —
+    # their subcommands are enumerated below instead.
+    sed -n '/^    case "\$cmd" in/,/^    esac/p' "$src" \
+        | grep -oE '^        [a-z][a-z-]*\)' | tr -d ' )' \
+        | grep -vE '^(pr|pipeline)$'
+    sed -n '/case "\$subcmd" in/,/esac/p' "$src" \
+        | grep -oE '^ +[a-z][a-z-]*\)' | tr -d ' )' | sed 's/^/pr /'
+    sed -n '/case "\$psubcmd" in/,/esac/p' "$src" \
+        | grep -oE '^ +[a-z][a-z-]*\)' | tr -d ' )' | sed 's/^/pipeline /'
+}
 
 # load_bbb: source bbb (function definitions only — the top-level
 # imperative block is BASH_SOURCE-guarded so sourcing skips it).

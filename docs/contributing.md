@@ -47,7 +47,8 @@ Skipped by default.
 4. Update `README.md` Usage section + add a full entry in [`docs/commands.md`](commands.md)
 5. Add bats tests in `test/test_pr_commands.bats` — **assert both** response parsing AND outbound payload (via `last_curl_call`)
 6. Add a line to `CHANGELOG.md [Unreleased]`
-7. Reflect the command and any new caveat in **all three** AI artifacts — [`bb-bash-rule.md`](agents/bb-bash-rule.md), [`bb-bash-snippet.md`](agents/bb-bash-snippet.md), [`bb-bash-skill/SKILL.md`](agents/bb-bash-skill/SKILL.md). They are deliberately kept at factual parity so a user can pick any one; see [`agents/README.md`](agents/README.md)
+7. Reflect the command and any new caveat in **all three** AI artifacts — [`bb-bash-rule.md`](agents/bb-bash-rule.md), [`bb-bash-snippet.md`](agents/bb-bash-snippet.md), [`bb-bash-skill/SKILL.md`](agents/bb-bash-skill/SKILL.md). They are deliberately kept at factual parity so a user can pick any one; see [`agents/README.md`](agents/README.md). **Enforced:** `test/test_agent_artifacts.bats` parses the router and fails when a command is missing from any artifact — so forgetting this step shows up as a red suite, not as a stale file. It checks presence only; a new caveat still has to be written by hand
+8. If the command touched a shared helper or established a new pattern, update [`docs/design.md`](design.md) (the decision and any caveat) and this file (the pattern a contributor copies). Steps 1-7 all describe the command; these two describe the machinery behind it, and drift here stays invisible until someone writes the next command against a stale rule
 
 ## Code style
 
@@ -142,6 +143,7 @@ Pre-rename commits in git history use the older `bb-api-XXX` scope (immutable). 
 | New env var | `docs/commands.md` Environment section + `.env.example` if applicable |
 | Breaking change | CHANGELOG `### Changed` + `### Migration Notes` |
 | New scope requirement | README setup section + per-command notes in `docs/commands.md` |
+| Cutting a release | [`docs/releasing.md`](releasing.md) — branch, tag, GitHub release, and what the installer actually serves |
 
 ## scripts/
 

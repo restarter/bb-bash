@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The AI artifacts (`bb-bash-rule.md`, `bb-bash-snippet.md`, `bb-bash-skill/SKILL.md`) now all carry the raw escape hatches (`raw`, `raw-post`, `raw-put`, `raw-delete`) and a pointer to `bbb help`. `docs/agents/README.md` promises each artifact is self-contained, but `rule` and `snippet` had never listed any `raw` verb — an agent reading either had no way to reach an endpoint without a wrapper. The `bbb help` line matters for a different reason: `install-agent` drops a **copy** into a project, so a reader whose `bbb` was upgraded since had nothing telling them their list might be older than the binary. (bb-bash-4sy)
+
 ## [0.3.0] - 2026-08-05
 
 ### Added

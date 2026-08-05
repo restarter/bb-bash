@@ -50,11 +50,21 @@ bbb pr merge <id> [--squash|--commit|--ff] [--delete-branch]
 
 # Create / update
 bbb pr create <target_branch> "Title" "Description"
-bbb pr update <id> --title="New title" --description="..."
+bbb pr update <id> --title="New title" --description="..." --reviewers=u1,u2
 bbb pr update <id> --destination=main            # retarget a stacked PR after its base merged
 
 # Browser escape hatch
 bbb pr open <id>
+
+# Raw API — for endpoints with no wrapper. Path is relative to the repo.
+bbb raw [--text] <endpoint>                      # GET  (--text for non-JSON bodies, e.g. logs)
+bbb raw-post <endpoint> <json>                   # POST
+bbb raw-put <endpoint> <json>                    # PUT
+bbb raw-delete <endpoint>                        # DELETE — exits non-zero on failure
+
+# This list can go stale: it was copied into your project and bbb may have been
+# upgraded since. If a command here fails or you need exact syntax, ask the binary.
+bbb help
 ```
 
 ### For AI agents (review patterns)
