@@ -38,6 +38,13 @@ artifact_exempt() {
 #
 # Consequence worth knowing before you write a negative test: deleting a command
 # from the list does NOT fail while prose still names it. Delete every mention.
+#
+# The match is anchored at a word boundary, NOT a plain substring. Several
+# commands are prefixes of others — `raw` of `raw-post`/`raw-put`/`raw-delete`,
+# `pr comment` of `pr comments` — so a substring test reports `bbb raw` as
+# present in a file that only ever mentions `bbb raw-post`. That blind spot sits
+# exactly where a drift test has to be sharp, so the trailing character must not
+# continue the command name.
 assert_artifact_covers() {
     local rel="$1" artifact="$BB_BASH_ROOT/$1"
     [ -f "$artifact" ] || { echo "artifact missing: $rel" >&2; return 1; }
@@ -46,7 +53,7 @@ assert_artifact_covers() {
     while IFS= read -r cmd; do
         [ -n "$cmd" ] || continue
         artifact_exempt "$cmd" && continue
-        grep -qF -- "bbb $cmd" "$artifact" || missing+=("$cmd")
+        grep -qE -- "bbb ${cmd}([^a-z-]|\$)" "$artifact" || missing+=("$cmd")
     done < <(bbb_command_surface)
 
     if [ ${#missing[@]} -gt 0 ]; then

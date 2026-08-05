@@ -39,4 +39,18 @@ jobs:
           git -C /tmp/bats checkout 5da66876b8b619235aee1eb3e54954eaca88059b  # v1.11.0
           sudo /tmp/bats/install.sh /usr/local
       - name: Run bats tests (excluding test_live.bats — gated by BB_BASH_TEST_LIVE)
-        run: bats test/test_helpers.bats test/test_pr_commands.bats test/test_script_dir.bats test/test_install_helpers.bats
+        # DISCOVERED, not enumerated. A hand-written file list silently drops any
+        # new suite: test_install_agent.bats (22 tests) never ran here, and
+        # test_agent_artifacts.bats would have shipped claiming CI enforcement it
+        # did not have. Only test_live.bats is excluded, and deliberately — it
+        # hits the real API and is gated by BB_BASH_TEST_LIVE.
+        run: |
+          set -euo pipefail
+          # Built with a read loop rather than mapfile: bash 3.2 has no mapfile,
+          # and this step should stay runnable locally on macOS for verification.
+          files=()
+          while IFS= read -r f; do files+=("$f"); done \
+            < <(find test -maxdepth 1 -name '*.bats' ! -name 'test_live.bats' | sort)
+          test "${#files[@]}" -gt 0 || { echo "no bats files found — check the find expression"; exit 1; }
+          printf '%s\n' "${files[@]}"
+          bats "${files[@]}"
