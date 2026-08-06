@@ -291,6 +291,20 @@ Four separate verbs rather than one `raw --method=`: `api_delete` returns a stat
 
 ---
 
+## help
+
+**Synopsis:** `bbb help` (also `bbb -h`, `bbb --help`, or `bbb` with no arguments)
+
+**Description:** Print the command list and the configuration reference for the installed version.
+
+**Required scopes:** none — this command short-circuits credential and repo resolution, so it works without a `.env` and outside a Bitbucket repository.
+
+Worth knowing for AI agents: the artifacts under `docs/agents/` are **copies** dropped into a project by `install-agent`, and `bbb` may have been upgraded since. `bbb help` is the source of truth for **which commands** the installed binary accepts — `test/test_agent_artifacts.bats` asserts it lists every command the router defines.
+
+It is deliberately not a flag reference: `usage()` is a one-screen summary and some commands carry flags it does not spell out. For those, `bbb install-agent --help` prints its own full table, and this file is the complete reference.
+
+---
+
 ## install-agent
 
 **Synopsis:**
@@ -315,7 +329,7 @@ Four separate verbs rather than one `raw --method=`: `api_delete` returns a stat
 **Source:** artifacts are fetched from `https://raw.githubusercontent.com/restarter/bb-bash/${BB_BASH_REF:-main}/docs/agents/`. Pin to a release tag for reproducibility:
 
 ```bash
-BB_BASH_REF=v0.2.0 bbb install-agent --rule --skill --claude --agents
+BB_BASH_REF=v0.3.0 bbb install-agent --rule --skill --claude --agents
 ```
 
 **Examples:**

@@ -38,5 +38,12 @@ jobs:
           git clone https://github.com/bats-core/bats-core.git /tmp/bats
           git -C /tmp/bats checkout 5da66876b8b619235aee1eb3e54954eaca88059b  # v1.11.0
           sudo /tmp/bats/install.sh /usr/local
-      - name: Run bats tests (excluding test_live.bats — gated by BB_BASH_TEST_LIVE)
-        run: bats test/test_helpers.bats test/test_pr_commands.bats test/test_script_dir.bats test/test_install_helpers.bats
+      - name: Run bats tests
+        # A glob, not a hand-written file list: the list had silently dropped
+        # test_install_agent.bats (22 tests that never ran here) and would drop
+        # every future suite the same way. test_live.bats needs no exclusion —
+        # it skips itself in setup() unless BB_BASH_TEST_LIVE=1.
+        #
+        # This is also the exact command CLAUDE.md and docs/contributing.md tell
+        # contributors to run, so CI and local stay the same thing.
+        run: bats test/*.bats

@@ -102,7 +102,7 @@ Auto-detect precedence and URL parsing live in [docs/design.md](docs/design.md) 
 4. Update README usage + add full entry in `docs/commands.md`
 5. Add bats test in `test/test_pr_commands.bats` (with payload assertion)
 6. Add line to `CHANGELOG.md [Unreleased]`
-7. Reflect the command and any new caveat in **all three** AI artifacts (`docs/agents/bb-bash-rule.md`, `bb-bash-snippet.md`, `bb-bash-skill/SKILL.md`) — they are kept at factual parity, see `docs/agents/README.md`
+7. Reflect the command and any new caveat in **all three** AI artifacts (`docs/agents/bb-bash-rule.md`, `bb-bash-snippet.md`, `bb-bash-skill/SKILL.md`) — they are kept at factual parity, see `docs/agents/README.md`. **Enforced:** `test/test_agent_artifacts.bats` parses the router and fails when a command is missing from any of the three, when an artifact teaches a command the router does not define, or when `bbb help` omits one. It does NOT check wording — a new caveat is still hand-written. A command that deliberately does not belong in the artifacts needs an entry with its reason in `artifact_exempt()`
 8. If the command touched a shared helper or established a new pattern, update `docs/design.md` (the design decision and any caveat) and `docs/contributing.md` (the pattern a contributor copies). Steps 1-7 all describe the command; these two describe the machinery behind it, and drift here is invisible until someone writes the next command against a stale rule.
 
 Full contributing guide: [docs/contributing.md](docs/contributing.md).

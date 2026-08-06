@@ -34,7 +34,7 @@ bbb pr inline <id> path/to/file 42 "comment on new code"
 bbb pr inline --old <id> path/to/file 10 "comment on deleted code"
 bbb pr reply <pr_id> <comment_id> "reply text"
 bbb pr edit-comment <pr_id> <comment_id> "updated text"     # own comments only
-bbb pr delete-comment <pr_id> <comment_id>                  # own comments only
+bbb pr delete-comment <pr_id> <comment_id>                  # own comments only; prints "Failed ..." and EXITS 0 — check output, not status
 
 # Approve / request changes / decline / merge
 bbb pr approve <id> [<id> ...]           # batch-capable
@@ -50,6 +50,17 @@ bbb pr update <id> --destination=main            # retarget a stacked PR after i
 
 # Browser escape hatch
 bbb pr open <id>
+
+# Raw API — for endpoints with no wrapper. Path is relative to the repo.
+bbb raw [--text] <endpoint>                      # GET  (--text for non-JSON bodies, e.g. logs)
+bbb raw-post <endpoint> <json>                   # POST
+bbb raw-put <endpoint> <json>                    # PUT
+bbb raw-delete <endpoint>                        # DELETE — exits non-zero on failure
+
+# This list can go stale: it was copied into your project and bbb may have been
+# upgraded since. If a command here fails, ask the binary which commands it has.
+# (it lists commands, not every flag — see docs/commands.md for those.)
+bbb help
 ```
 
 ## Conventions

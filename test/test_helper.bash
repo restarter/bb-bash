@@ -7,7 +7,116 @@
 # linter stays useful for the rest of the file.
 
 # Locate script path
-export BB_BASH_SCRIPT="${BB_BASH_SCRIPT:-$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)/bbb}"
+export BB_BASH_ROOT="${BB_BASH_ROOT:-$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)}"
+export BB_BASH_SCRIPT="${BB_BASH_SCRIPT:-${BB_BASH_ROOT}/bbb}"
+
+# bbb_command_surface — the user-facing command surface, one entry per line
+# ("pr show", "pipeline log", "raw-put"), parsed out of the router in bbb.
+#
+# PARSED, never hard-coded. A literal list here would be a fourth copy of the
+# command surface for someone to forget — which is the exact failure the
+# artifact-drift tests exist to catch.
+#
+# Parsed from the file rather than enumerated from a sourced shell because the
+# router is a `case` inside main(): sourcing bbb gives you the functions, not
+# the dispatch table.
+#
+# Depends on the router's indentation — top-level arms at 8 spaces, nested
+# subcommand arms at 16. If that ever changes this quietly returns a short list
+# and the drift tests pass for the wrong reason, so test_agent_artifacts.bats
+# pins both the count and a couple of known entries.
+#
+# SC2016: the `$` in the sed addresses is sed's own literal, matching `"$cmd"`
+# in the router text — single quotes are required so bash leaves it alone.
+# shellcheck disable=SC2016
+# bbb_text_mentions_command <command> — reads text on stdin, true if it names
+# that command. THE single definition of "mentions a command", deliberately:
+# every consumer of this idea that got its own copy has so far got it wrong.
+#
+# Anchored at a word boundary, not a substring. Several commands are prefixes of
+# others — `raw` of `raw-post`/`raw-put`/`raw-delete`, `pr comment` of
+# `pr comments` — so a substring test reports `bbb raw` present in text that only
+# ever says `bbb raw-post`. That blind spot sits exactly where a drift check has
+# to be sharp, so the character after the name must not continue it.
+bbb_text_mentions_command() {
+    grep -qE -- "bbb ${1}([^a-z-]|\$)"
+}
+
+# bbb_router_group_prefixes — top-level arms that open a nested `case`, i.e.
+# command GROUPS (`pr`, `pipeline`). DERIVED, not listed: a hard-coded pair let a
+# third group's subcommands become invisible to every check while the bare group
+# prefix leaked in as if it were runnable.
+#
+# The awk is deliberately interval-free (`{8,}` is not portable to the awk that
+# ships with macOS); the outer `case "$cmd" in` is excluded by name instead.
+# shellcheck disable=SC2016
+bbb_router_group_prefixes() {
+    local src="${1:-$BB_BASH_SCRIPT}"
+    sed -n '/^    case "\$cmd" in/,/^    esac/p' "$src" \
+        | awk '/^        [a-z][a-z|-]*\)/ { n = $0; sub(/^ +/, "", n); sub(/\).*/, "", n); next }
+               /case "\$/ && !/case "\$cmd" in/ { if (n != "") { print n; n = "" } }' \
+        | tr '|' '\n' | sort -u
+}
+
+# The arm classes accept `|` so an alternation arm (`rc|request-changes)`, the
+# first shape anyone reaches for when adding an alias, and already idiomatic in
+# `cmd_pr_list`'s --state parser, `cmd_install_agent`'s flag loop and the
+# top-level auth short-circuit) is matched and then split into its commands.
+# A `)`-only class silently skipped such arms entirely.
+#
+# Symbols, not line numbers: the citations that used to live here broke inside
+# the very commit that wrote them, when a line was added above.
+# shellcheck disable=SC2016
+bbb_command_surface() {
+    local src="${1:-$BB_BASH_SCRIPT}"
+    # Top-level verbs, minus the group prefixes — those are not runnable on their
+    # own (bare `bbb pr` prints usage and exits 1); their subcommands stand in.
+    # A leading `-` marks a flag-spelling alias of a command it shares an arm
+    # with (`help|-h|--help)`), not a command of its own. Dropped from both the
+    # surface and the arm count so the accounting invariant stays consistent —
+    # nothing should demand that artifacts document `bbb --help` as a verb.
+    sed -n '/^    case "\$cmd" in/,/^    esac/p' "$src" \
+        | grep -oE '^        [a-z][a-z|-]*\)' | tr -d ' )' | tr '|' '\n' \
+        | grep -v '^-' \
+        | grep -vxF -f <(bbb_router_group_prefixes "$src")
+    sed -n '/case "\$subcmd" in/,/esac/p' "$src" \
+        | grep -oE '^ +[a-z][a-z|-]*\)' | tr -d ' )' | tr '|' '\n' | sed 's/^/pr /'
+    sed -n '/case "\$psubcmd" in/,/esac/p' "$src" \
+        | grep -oE '^ +[a-z][a-z|-]*\)' | tr -d ' )' | tr '|' '\n' | sed 's/^/pipeline /'
+}
+
+# bbb_router_arm_count — how many command NAMES the router declares, counted at
+# ANY nesting depth (`*)` excluded, alternation arms split like the surface does).
+#
+# The independence that matters is the depth rule, not the splitting: this scans
+# every indentation level, while bbb_command_surface only scans the levels it
+# knows about. So arms the surface cannot reach still get counted here.
+#
+# The accounting invariant it feeds — surface == arms - groups — closes the CLASS
+# of parser bug rather than one instance. Two escapes passed silently before it
+# existed: an alternation arm the surface regex did not match, and a third command
+# group whose nested `case` the surface does not know about. Either now shows up
+# as a count mismatch instead of as quiet under-coverage.
+# shellcheck disable=SC2016
+bbb_router_arm_count() {
+    local src="${1:-$BB_BASH_SCRIPT}"
+    sed -n '/^    case "\$cmd" in/,/^    esac/p' "$src" \
+        | grep -oE '^ +[a-z][a-z|-]*\)' | tr -d ' )' | tr '|' '\n' \
+        | grep -v '^-' | grep -c .
+}
+
+# bbb_router_group_count — nested `case` blocks inside the router, i.e. command
+# GROUPS (`pr`, `pipeline`). Their top-level arm is a prefix, not a command, so
+# each one costs the surface exactly one entry against the arm count.
+#
+# The 8-space floor excludes the router's own `case "$cmd" in`, which sits at 4
+# and would otherwise be counted as a group and skew the invariant by one.
+# shellcheck disable=SC2016
+bbb_router_group_count() {
+    local src="${1:-$BB_BASH_SCRIPT}"
+    sed -n '/^    case "\$cmd" in/,/^    esac/p' "$src" \
+        | grep -cE '^ {8,}case "\$[a-z]+" in'
+}
 
 # load_bbb: source bbb (function definitions only — the top-level
 # imperative block is BASH_SOURCE-guarded so sourcing skips it).

@@ -60,7 +60,7 @@ bash install.sh
 Same applies to `bbb install-agent --rule --skill --claude --agents` — it fetches artifact files from `raw.githubusercontent.com`. Pin a release tag for reproducibility:
 
 ```bash
-BB_BASH_REF=v0.2.0 bbb install-agent --rule --skill --claude --agents
+BB_BASH_REF=v0.3.0 bbb install-agent --rule --skill --claude --agents
 ```
 
 ## Dependencies
