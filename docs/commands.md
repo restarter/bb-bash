@@ -329,7 +329,7 @@ It is deliberately not a flag reference: `usage()` is a one-screen summary and s
 **Source:** artifacts are fetched from `https://raw.githubusercontent.com/restarter/bb-bash/${BB_BASH_REF:-main}/docs/agents/`. Pin to a release tag for reproducibility:
 
 ```bash
-BB_BASH_REF=v0.3.0 bbb install-agent --rule --skill --claude --agents
+BB_BASH_REF=v0.3.1 bbb install-agent --rule --skill --claude --agents
 ```
 
 **Examples:**
