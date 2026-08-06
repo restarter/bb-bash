@@ -52,7 +52,7 @@ Run `bbb install-agent` inside your project — or with `--global` for every pro
 | `--dry-run` | Preview the writes without touching disk |
 | `--force` | Overwrite an existing artifact (default is skip-if-exists) |
 
-Pin to a release tag for reproducibility: `BB_BASH_REF=v0.3.0 bbb install-agent ...`. Full flag reference: [docs/commands.md#install-agent](docs/commands.md#install-agent).
+Pin to a release tag for reproducibility: `BB_BASH_REF=v0.3.1 bbb install-agent ...`. Full flag reference: [docs/commands.md#install-agent](docs/commands.md#install-agent).
 
 ### Examples
 

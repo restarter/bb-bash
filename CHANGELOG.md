@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-06
+
 ### Added
 - `bbb help` is now listed in its own output and documented in `docs/commands.md`. The AI artifacts point at it as the source of truth for what the installed binary accepts — they are copies dropped into a project by `install-agent` and go stale when `bbb` is upgraded — so the command being absent from its own help was a hole in that story. (bb-bash-4sy)
 - `test/test_agent_artifacts.bats` — parses the command surface out of the router and fails when a command is missing from any AI artifact, when an artifact teaches a command the router does not define, or when `usage()` omits one. `CLAUDE.md` step 7 already required artifact parity; nothing checked it. Also adds `docs/releasing.md`, which previously lived only in whoever cut the last release. (bb-bash-4sy)
