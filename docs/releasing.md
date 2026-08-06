@@ -20,16 +20,16 @@ So for those two files the tag is not decoration — it *is* the artifact. A fix
 | `docs/agents/*` — the AI artifacts | **`main`**, via `${BB_BASH_REF:-main}` in `install-agent` (`bbb:375`, `bbb:404`) |
 | `scripts/install.sh` itself | **`main`** (the documented curl-pipe URL) |
 
-So an artifact edit is live for every new `bbb install-agent` the moment it merges — before any release, while its CHANGELOG entry still sits under `[Unreleased]`. Do not read "unreleased" as "not yet reaching users" for those files.
+So an artifact edit is live for every **default** (unpinned) `bbb install-agent` the moment it merges — before any release, while its CHANGELOG entry still sits under `[Unreleased]`. Do not read "unreleased" as "not yet reaching users" for those files.
 
-This is also why step 2 below matters: bumping the pinned `BB_BASH_REF` examples is what makes `BB_BASH_REF=vX.Y.Z bbb install-agent` hand someone a coherent set — binary and artifacts from the same tag — instead of a tagged binary with main-tracking artifacts.
+This is also why step 2 below matters, though for the *pinned* case rather than that one: bumping the `BB_BASH_REF` examples is what makes someone who copies the pinned line get artifacts from the tag their binary came from, instead of from the tag two releases ago. The v0.3.0 tag shipped `BB_BASH_REF=v0.2.0` in all six sites — exactly that failure, already in the wild.
 
 ## Choosing the number
 
 Semver, pre-1.0:
 
-- **Minor** (`0.3.0`) — new commands or flags. Any addition to the router or to `usage()`.
-- **Patch** (`0.2.4`) — fixes only, no new surface.
+- **Minor** (`0.3.0`) — a new command or flag reaching the router or `usage()`.
+- **Patch** (`0.2.4`) — fixes only, no new surface. Documentation-only edits to `usage()` — filling in a command that already shipped — are patch, not minor.
 
 The call is the maintainer's; when in doubt, ask rather than assume. `v0.3.0` was minor because it added `raw-put`, `raw-delete`, `pr request-changes`, `pr unrequest-changes`, `--destination` and `--stat`.
 
@@ -75,7 +75,7 @@ git commit -m "chore(bb-bash-XXX): bump CHANGELOG for v0.3.0 release"
 
 The body should say what is being promoted and why the number is minor or patch. See `5397231` for the shape.
 
-The task-id scope is the repo convention (`docs/contributing.md` → Commit convention). History is split — `v0.2.0` and `v0.2.1` carry one, `v0.3.0` does not — so use it and keep the exception from spreading.
+The task-id scope is the repo convention (`docs/contributing.md` → Commit convention). History is split 3/3 — `v0.1.0` through `v0.2.1` carry one, `v0.2.2` onward do not. The scoped form is the older habit and the drift since `v0.2.2` was inadvertent, so restore it here rather than following the recent three.
 
 ### 5. PR, wait for CI, merge
 

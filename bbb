@@ -39,6 +39,7 @@
 #   bbb raw-delete <endpoint>                  - Raw API call (DELETE; exits non-zero on failure)
 #   bbb install-agent [--rule] [--skill] [--claude] [--agents]
 #                                                 - Drop AI-agent integration artifacts into $PWD
+#   bbb help  (also -h, --help)                - Show usage; no .env or Bitbucket repo needed
 
 set -euo pipefail
 
@@ -1505,7 +1506,10 @@ main() {
         raw-put)       require_args 2 $# "Usage: bbb raw-put <endpoint> <json>"; cmd_raw_put "$1" "$2" ;;
         raw-delete)    require_args 1 $# "Usage: bbb raw-delete <endpoint>"; cmd_raw_delete "$1" ;;
         install-agent) cmd_install_agent "$@" ;;
-        help)          usage ;;
+        # -h/--help were already short-circuited past auth by the top-level guard
+        # but had no arm here, so they fell through to *) and printed usage with
+        # exit 1 — right text, wrong status, indistinguishable from a typo.
+        help|-h|--help) usage ;;
         *)             usage; exit 1 ;;
     esac
 }

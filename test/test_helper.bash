@@ -29,18 +29,56 @@ export BB_BASH_SCRIPT="${BB_BASH_SCRIPT:-${BB_BASH_ROOT}/bbb}"
 # SC2016: the `$` in the sed addresses is sed's own literal, matching `"$cmd"`
 # in the router text — single quotes are required so bash leaves it alone.
 # shellcheck disable=SC2016
+# bbb_text_mentions_command <command> — reads text on stdin, true if it names
+# that command. THE single definition of "mentions a command", deliberately:
+# every consumer of this idea that got its own copy has so far got it wrong.
+#
+# Anchored at a word boundary, not a substring. Several commands are prefixes of
+# others — `raw` of `raw-post`/`raw-put`/`raw-delete`, `pr comment` of
+# `pr comments` — so a substring test reports `bbb raw` present in text that only
+# ever says `bbb raw-post`. That blind spot sits exactly where a drift check has
+# to be sharp, so the character after the name must not continue it.
+bbb_text_mentions_command() {
+    grep -qE -- "bbb ${1}([^a-z-]|\$)"
+}
+
+# bbb_router_group_prefixes — top-level arms that open a nested `case`, i.e.
+# command GROUPS (`pr`, `pipeline`). DERIVED, not listed: a hard-coded pair let a
+# third group's subcommands become invisible to every check while the bare group
+# prefix leaked in as if it were runnable.
+#
+# The awk is deliberately interval-free (`{8,}` is not portable to the awk that
+# ships with macOS); the outer `case "$cmd" in` is excluded by name instead.
+# shellcheck disable=SC2016
+bbb_router_group_prefixes() {
+    local src="${1:-$BB_BASH_SCRIPT}"
+    sed -n '/^    case "\$cmd" in/,/^    esac/p' "$src" \
+        | awk '/^        [a-z][a-z|-]*\)/ { n = $0; sub(/^ +/, "", n); sub(/\).*/, "", n); next }
+               /case "\$/ && !/case "\$cmd" in/ { if (n != "") { print n; n = "" } }' \
+        | tr '|' '\n' | sort -u
+}
+
 # The arm classes accept `|` so an alternation arm (`rc|request-changes)`, the
-# first shape anyone reaches for when adding an alias, and already idiomatic at
-# bbb:499 / :1287 / :1527) is matched and then split into its separate commands.
-# A `)`-only class silently skipped such arms entirely — the commands never
-# entered the surface and the drift tests passed while covering nothing.
+# first shape anyone reaches for when adding an alias, and already idiomatic in
+# `cmd_pr_list`'s --state parser, `cmd_install_agent`'s flag loop and the
+# top-level auth short-circuit) is matched and then split into its commands.
+# A `)`-only class silently skipped such arms entirely.
+#
+# Symbols, not line numbers: the citations that used to live here broke inside
+# the very commit that wrote them, when a line was added above.
+# shellcheck disable=SC2016
 bbb_command_surface() {
     local src="${1:-$BB_BASH_SCRIPT}"
-    # Top-level verbs. `pr` and `pipeline` are group prefixes, not commands —
-    # their subcommands are enumerated below instead.
+    # Top-level verbs, minus the group prefixes — those are not runnable on their
+    # own (bare `bbb pr` prints usage and exits 1); their subcommands stand in.
+    # A leading `-` marks a flag-spelling alias of a command it shares an arm
+    # with (`help|-h|--help)`), not a command of its own. Dropped from both the
+    # surface and the arm count so the accounting invariant stays consistent —
+    # nothing should demand that artifacts document `bbb --help` as a verb.
     sed -n '/^    case "\$cmd" in/,/^    esac/p' "$src" \
         | grep -oE '^        [a-z][a-z|-]*\)' | tr -d ' )' | tr '|' '\n' \
-        | grep -vE '^(pr|pipeline)$'
+        | grep -v '^-' \
+        | grep -vxF -f <(bbb_router_group_prefixes "$src")
     sed -n '/case "\$subcmd" in/,/esac/p' "$src" \
         | grep -oE '^ +[a-z][a-z|-]*\)' | tr -d ' )' | tr '|' '\n' | sed 's/^/pr /'
     sed -n '/case "\$psubcmd" in/,/esac/p' "$src" \
@@ -63,7 +101,8 @@ bbb_command_surface() {
 bbb_router_arm_count() {
     local src="${1:-$BB_BASH_SCRIPT}"
     sed -n '/^    case "\$cmd" in/,/^    esac/p' "$src" \
-        | grep -oE '^ +[a-z][a-z|-]*\)' | tr -d ' )' | tr '|' '\n' | grep -c .
+        | grep -oE '^ +[a-z][a-z|-]*\)' | tr -d ' )' | tr '|' '\n' \
+        | grep -v '^-' | grep -c .
 }
 
 # bbb_router_group_count — nested `case` blocks inside the router, i.e. command

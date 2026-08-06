@@ -58,7 +58,8 @@ bbb raw-put <endpoint> <json>                    # PUT
 bbb raw-delete <endpoint>                        # DELETE — exits non-zero on failure
 
 # This list can go stale: it was copied into your project and bbb may have been
-# upgraded since. If a command here fails or you need exact syntax, ask the binary.
+# upgraded since. If a command here fails, ask the binary which commands it has.
+# (it lists commands, not every flag — see docs/commands.md for those.)
 bbb help
 ```
 

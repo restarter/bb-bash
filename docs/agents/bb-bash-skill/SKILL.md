@@ -93,7 +93,7 @@ bbb raw-delete "/pullrequests/<id>/comments/<cid>"                      # arbitr
 bbb help                                 # the live command list — see below
 ```
 
-**This file can be older than the binary.** It was copied into the project by `bbb install-agent`, and `bbb` may have been upgraded since. The command list here is the inventory to plan against; `bbb help` is the source of truth for what the installed version actually accepts. Reach for it when a command here fails, when you need exact flag syntax, or when you suspect a capability exists that this file predates.
+**This file can be older than the binary.** It was copied into the project by `bbb install-agent`, and `bbb` may have been upgraded since. The command list here is the inventory to plan against; `bbb help` is the source of truth for **which commands** the installed version accepts. Reach for it when a command here fails, or when you suspect a capability exists that this file predates. It is not a flag reference — for that, `bbb install-agent --help` and `docs/commands.md`.
 
 `raw-delete` exits non-zero on failure, so `set -e` and exit-status checks work. (`pr delete-comment` instead prints `Failed …` and exits 0 — check its output, not its status.)
 

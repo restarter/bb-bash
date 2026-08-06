@@ -47,12 +47,10 @@ artifact_exempt() {
 # Consequence worth knowing before you write a negative test: deleting a command
 # from the list does NOT fail while prose still names it. Delete every mention.
 #
-# The match is anchored at a word boundary, NOT a plain substring. Several
-# commands are prefixes of others — `raw` of `raw-post`/`raw-put`/`raw-delete`,
-# `pr comment` of `pr comments` — so a substring test reports `bbb raw` as
-# present in a file that only ever mentions `bbb raw-post`. That blind spot sits
-# exactly where a drift test has to be sharp, so the trailing character must not
-# continue the command name.
+# Matching goes through bbb_text_mentions_command — the ONE definition of
+# "mentions a command" (test_helper.bash). Every consumer that grew its own copy
+# has so far got the prefix boundary wrong, so there is deliberately no second
+# copy here.
 assert_artifact_covers() {
     local rel="$1" artifact="$BB_BASH_ROOT/$1"
     [ -f "$artifact" ] || { echo "artifact missing: $rel" >&2; return 1; }
@@ -61,7 +59,7 @@ assert_artifact_covers() {
     while IFS= read -r cmd; do
         [ -n "$cmd" ] || continue
         artifact_exempt "$cmd" && continue
-        grep -qE -- "bbb ${cmd}([^a-z-]|\$)" "$artifact" || missing+=("$cmd")
+        bbb_text_mentions_command "$cmd" < "$artifact" || missing+=("$cmd")
     done < <(bbb_command_surface)
 
     if [ ${#missing[@]} -gt 0 ]; then
@@ -99,28 +97,17 @@ assert_artifact_covers() {
     contains "$output" '*install-agent*'
 }
 
-@test "command surface: group prefixes never leak in as commands" {
-    # Matched per LINE, not as a glob over the joined output. The previous form
-    # — not_contains "$output" '*\npr\n*' — could not fail: it needs a newline
-    # BEFORE `pr`, and `pr)` is the FIRST arm in the router, so a regressed
-    # filter puts `pr` on line 1 with nothing in front of it. `pipeline` was not
-    # checked at all. not_contains fails open, exactly as test_helper.bash warns.
-    local leaked
-    leaked=$(bbb_command_surface | grep -cxE 'pr|pipeline' || true)
-    [ "$leaked" -eq 0 ] || {
-        echo "group prefixes leaked into the command surface ($leaked)" >&2
-        echo "They are prefixes, not runnable commands — bare 'bbb pr' prints usage." >&2
-        return 1
-    }
-}
-
+# ONE accounting guard, not four. Regressing the parser four ways — dropping the
+# prefix filter, reverting alternation support, losing the top-level tier,
+# renaming the router variable — this test fails on all four, while the
+# per-property assertions it replaced each caught a strict subset and never fired
+# alone. Guards are code that can be wrong too, and in this suite three of them
+# were; fewer and sharper beats more.
 @test "command surface: accounts for every arm the router declares" {
-    # The invariant that closes the CLASS of parser bug: surface == arms - groups.
-    # Arms are counted at ANY depth, so anything the surface cannot reach shows up
-    # as a shortfall rather than as quiet under-coverage. Two real escapes it
-    # catches: an alternation arm (`a|b)`) the surface regex once skipped, and a
-    # third command group whose nested `case` the surface does not know about —
-    # both of which previously left the whole suite green.
+    # surface == arms - groups. Arms are counted at ANY depth, so anything the
+    # surface cannot reach shows up as a shortfall rather than as quiet
+    # under-coverage: an alternation arm the regex skips, a new command group,
+    # a renamed dispatch variable, a reindented router.
     local surface arms groups expected
     surface=$(bbb_command_surface | wc -l | tr -d ' ')
     arms=$(bbb_router_arm_count)
@@ -132,26 +119,12 @@ assert_artifact_covers() {
         echo "  router arms     : $arms (any depth)" >&2
         echo "  command groups  : $groups (nested case blocks)" >&2
         echo "  expected        : $expected  (arms - groups)" >&2
+        echo "  group prefixes  : $(bbb_router_group_prefixes | tr '\n' ' ')" >&2
         echo "" >&2
-        echo "A shortfall means bbb_command_surface in test/test_helper.bash cannot" >&2
-        echo "see some arm shape or nesting the router now uses — extend the parser." >&2
-        echo "A new command group needs its own line there; without it, every one of" >&2
-        echo "its subcommands is silently exempt from the artifact-drift check." >&2
-        return 1
-    }
-}
-
-@test "command surface: every tier is populated" {
-    # A bare total hides a whole tier vanishing. The old `-ge 20` floor was the
-    # exact residue of losing the top-level tier: 6 top + 19 pr + 1 pipeline = 26,
-    # and 19 + 1 = 20 still passed it. Counted per tier, one cannot cover for
-    # another.
-    local top prs pipe
-    top=$(bbb_command_surface | grep -cvE '^(pr|pipeline) ' || true)
-    prs=$(bbb_command_surface | grep -cE '^pr ' || true)
-    pipe=$(bbb_command_surface | grep -cE '^pipeline ' || true)
-    [ "$top" -ge 5 ] && [ "$prs" -ge 15 ] && [ "$pipe" -ge 1 ] || {
-        echo "a command tier looks empty or truncated: top=$top pr=$prs pipeline=$pipe" >&2
+        echo "THE BUG IS IN THE PARSER, NOT IN THE ARTIFACTS. bbb_command_surface" >&2
+        echo "in test/test_helper.bash cannot see some arm shape or nesting the" >&2
+        echo "router now uses. If other tests in this file also failed naming" >&2
+        echo "specific commands, fix this one first — those names are collateral." >&2
         return 1
     }
 }
@@ -188,8 +161,16 @@ artifact_prose_noise() {
     # telling an agent what to run, a confidently documented dead command is worse
     # than a missing one — the agent will not consult `bbb help`, because it
     # already has a plan that looks like it works.
-    local surface rel cand failed=0
+    #
+    # Two mention shapes, because the artifacts use both: the runnable `bbb pr x`
+    # form, and backticked prose (`pr decline`) — 20 of the latter today. Checking
+    # only the first left exactly the rename scenario above passing green, with a
+    # whole bullet in rule.md still explaining a command that no longer existed.
+    # The prose pattern is built from the DERIVED group prefixes; a hard-coded
+    # `pr|pipeline` here would be the third copy of that knowledge.
+    local surface rel cand failed=0 groups
     surface=$(bbb_command_surface)
+    groups=$(bbb_router_group_prefixes | paste -sd'|' -)
     while IFS= read -r rel; do
         while IFS= read -r cand; do
             [ -n "$cand" ] || continue
@@ -198,25 +179,64 @@ artifact_prose_noise() {
                 echo "$rel documents 'bbb $cand', which the router does not define." >&2
                 failed=1
             }
-        done < <(grep -oE 'bbb [a-z][a-z-]*( [a-z][a-z-]*)?' "$BB_BASH_ROOT/$rel" \
-                   | sed 's/^bbb //' | sort -u)
+        done < <( { grep -oE 'bbb [a-z][a-z-]*( [a-z][a-z-]*)?' "$BB_BASH_ROOT/$rel" | sed 's/^bbb //'
+                    grep -oE "\`(${groups}) [a-z][a-z-]*\`" "$BB_BASH_ROOT/$rel" | tr -d '`'
+                  } | sort -u)
     done < <(artifact_files)
     [ "$failed" -eq 0 ]
 }
 
 @test "bbb help lists every command the router defines" {
-    # The artifacts now point at `bbb help` as the source of truth for what the
-    # installed binary accepts — the answer to a frozen copy going stale. That
-    # promise is only as good as usage(), which was itself kept in sync by
-    # remembering step 3 of the checklist: the same rule this suite replaces.
-    local cmd failed=0 out
-    out=$("$BB_BASH_SCRIPT" help 2>&1)
+    # The artifacts point at `bbb help` as the source of truth for which commands
+    # the installed binary accepts — the answer to a frozen copy going stale.
+    # That promise is only as good as usage(), which was itself kept in sync by
+    # remembering step 3 of the checklist: the rule this suite replaces.
+    #
+    # Run from a copy so no .env sits beside it: bbb sources ${SCRIPT_DIR}/.env,
+    # and this is the only non-live test that executes the real binary. Without
+    # the copy a contributor's credentials file is sourced into the test, and a
+    # bad one fails here with a message pointing nowhere near the cause.
+    local cmd failed=0 out isolated="$BATS_TEST_TMPDIR/bbb"
+    cp "$BB_BASH_SCRIPT" "$isolated"
+    run "$isolated" help
+    [ "$status" -eq 0 ] || { echo "bbb help exited $status" >&2; return 1; }
+    out="$output"
     while IFS= read -r cmd; do
         [ -n "$cmd" ] || continue
-        case "$out" in
-            *"bbb $cmd"*) ;;
-            *) echo "bbb help does not list 'bbb $cmd' — usage() is behind the router." >&2; failed=1 ;;
-        esac
+        printf '%s\n' "$out" | bbb_text_mentions_command "$cmd" || {
+            echo "bbb help does not list 'bbb $cmd' — usage() is behind the router." >&2
+            failed=1
+        }
+    done < <(bbb_command_surface)
+    [ "$failed" -eq 0 ]
+}
+
+@test "bbb -h and --help are routed, not treated as unknown commands" {
+    # docs/commands.md documents them as `help` synonyms. The auth short-circuit
+    # already lists them; without a matching router arm they fell through to
+    # `*) usage; exit 1` — printing the right text with the WRONG status, making
+    # `bbb --help` indistinguishable from `bbb --hepl` to any caller under set -e.
+    local isolated="$BATS_TEST_TMPDIR/bbb" flag
+    cp "$BB_BASH_SCRIPT" "$isolated"
+    for flag in -h --help; do
+        run "$isolated" "$flag"
+        [ "$status" -eq 0 ] || { echo "bbb $flag exited $status, expected 0" >&2; return 1; }
+        contains "$output" '*Usage:*'
+    done
+}
+
+@test "the header docstring lists every command the router defines" {
+    # Step 3 of the checklist names two surfaces — usage() AND the header
+    # docstring. Only one of them was checked, and the docstring was already
+    # missing `bbb help` when the test for usage() landed.
+    local cmd failed=0 doc
+    doc=$(sed -n '1,60p' "$BB_BASH_SCRIPT")
+    while IFS= read -r cmd; do
+        [ -n "$cmd" ] || continue
+        printf '%s\n' "$doc" | bbb_text_mentions_command "$cmd" || {
+            echo "the header docstring in bbb does not list 'bbb $cmd'." >&2
+            failed=1
+        }
     done < <(bbb_command_surface)
     [ "$failed" -eq 0 ]
 }
