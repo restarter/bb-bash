@@ -19,6 +19,30 @@ teardown() {
     [ "$REPO" = "myrepo" ]
 }
 
+# cmd_pr_create reads the branch with `git -C "$(pwd)" symbolic-ref --short HEAD`,
+# so the stub must survive the -C prefix — without stripping it, $1 is "-C" and
+# the case never reaches any arm.
+@test "stub_git: answers symbolic-ref through a -C prefix" {
+    stub_git --branch=feature/x "origin=https://bitbucket.org/ws/repo.git"
+    run git -C "$(pwd)" symbolic-ref --short HEAD
+    [ "$status" -eq 0 ]
+    contains "$output" 'feature/x'
+}
+
+@test "stub_git: --branch does not disturb the remote arms" {
+    stub_git --branch=feature/x "origin=https://bitbucket.org/ws/repo.git"
+    unset WORKSPACE REPO
+    resolve_workspace_repo
+    [ "$WORKSPACE" = "ws" ]
+    [ "$REPO" = "repo" ]
+}
+
+@test "stub_git: without --branch, symbolic-ref still falls through" {
+    stub_git "origin=https://bitbucket.org/ws/repo.git"
+    run git symbolic-ref --short HEAD
+    [ "$status" -ne 0 ]
+}
+
 @test "resolve_workspace_repo: parses HTTPS URL" {
     stub_git "origin=https://bitbucket.org/anotherws/anotherrepo.git"
     unset WORKSPACE REPO

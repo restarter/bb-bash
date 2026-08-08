@@ -289,12 +289,28 @@ EOF
 }
 
 # stub_git: install a git wrapper that returns canned remote URLs.
-# Usage: stub_git origin=https://bitbucket.org/ws/repo.git bb=git@bitbucket.org:other/x.git
+# Usage: stub_git [--branch=<name>] origin=https://bitbucket.org/ws/repo.git bb=git@bitbucket.org:other/x.git
+#
+# --branch=<name> makes the stub answer `symbolic-ref --short HEAD`, which
+# cmd_pr_create needs to read the source branch. It is a flag rather than
+# another name=url pair because those pairs become REMOTE names.
+#
+# The arm is emitted only when --branch= was passed, so every pre-existing
+# caller keeps the old behavior: symbolic-ref still falls through to exit 1.
 stub_git() {
+    local branch=""
+    if [[ "${1:-}" == --branch=* ]]; then
+        branch="${1#--branch=}"
+        shift
+    fi
     local pair name url names=""
     # shellcheck disable=SC2016
     {
         printf '#!/usr/bin/env bash\n'
+        # cmd_pr_create calls `git -C "$(pwd)" symbolic-ref --short HEAD`, so $1
+        # is -C and the case below would never reach any real arm. Strip it
+        # first. Harmless for the remote calls, which pass no -C.
+        printf 'if [[ "${1:-}" == "-C" ]]; then shift 2; fi\n'
         printf 'case "$1 ${2:-}" in\n'
         printf '    "remote get-url")\n'
         printf '        shift 2\n'
@@ -312,6 +328,11 @@ stub_git() {
         printf '    "remote ")\n'
         printf '        printf "%%s\\n" %s\n' "$names"
         printf '        ;;\n'
+        if [[ -n "$branch" ]]; then
+            printf '    "symbolic-ref --short")\n'
+            printf '        printf "%%s\\n" %s\n' "$(printf '%q' "$branch")"
+            printf '        ;;\n'
+        fi
         printf '    *) exit 1 ;;\n'
         printf 'esac\n'
     } > "$STUB_DIR/git"
