@@ -190,3 +190,40 @@ teardown() {
     contains "$output" '*PR #42*'
     contains "$output" '*declined*'
 }
+
+# The actual gate for "--method/--body defaults leave approve/decline/
+# request-changes byte-identical". Nothing else in the suite asserts the
+# outbound method or body for a batch call, so a flipped default would
+# otherwise stay green.
+@test "batch_action: with no flags it still POSTs an empty body" {
+    stub_curl '{"state":"DECLINED"}' 200
+    run batch_action "declined" "/pullrequests/{id}/decline" '.state' 42
+    [ "$status" -eq 0 ]
+    contains "$(last_curl_call)" '*-X POST*'
+    contains "$(last_curl_call)" '*-d {}*'
+}
+
+@test "batch_action: --method=PUT sends a PUT with the given body" {
+    stub_curl '{"state":"OPEN","draft":true}' 200
+    run batch_action --method=PUT --body='{"draft":true}' \
+        "marked draft" "/pullrequests/{id}" '.state' 42
+    [ "$status" -eq 0 ]
+    contains "$(last_curl_call)" '*-X PUT*'
+    contains "$(last_curl_call)" '*-d {"draft":true}*'
+}
+
+# A typo must not fall through to the label position: without the --*) arm
+# this printed "PR #42 --methd=PUT (DECLINED)" and POSTed anyway.
+@test "batch_action: an unknown flag is fatal, not a label" {
+    stub_curl '{"state":"DECLINED"}' 200
+    run batch_action --methd=PUT "declined" "/pullrequests/{id}/decline" '.state' 42
+    [ "$status" -ne 0 ]
+    contains "$output" '*Unknown flag*'
+}
+
+@test "batch_action: an unsupported method is rejected" {
+    stub_curl '{}' 200
+    run batch_action --method=DELETE "x" "/pullrequests/{id}" '.state' 42
+    [ "$status" -ne 0 ]
+    contains "$output" '*unsupported method*'
+}

@@ -332,9 +332,23 @@ api_delete() {
         "$url" || die "network error contacting Bitbucket (curl failed): $url"
 }
 
-# batch_action <label> <endpoint-template> <jq-success-msg> "$@"
-# Loop over 1+ PR IDs, call api_post --soft on each, print per-PR result.
+# batch_action [--method=POST|PUT] [--body=<json>] <label> <endpoint-template> <jq-success-msg> "$@"
+# Loop over 1+ PR IDs, call the API on each, print per-PR result.
 # Sleep 0.3s (or $BB_BASH_BATCH_DELAY) between calls when total > 1.
+#
+# Optional leading flags (defaults keep every pre-existing call byte-identical):
+#   --method=  POST (default) or PUT
+#   --body=    request body, default "{}"
+# Flag parsing stops at the first NON-FLAG argument, and an unrecognized --flag
+# is fatal rather than falling through: without that arm a typo like --methd=PUT
+# would silently become the LABEL, printing "PR #12 --methd=PUT (OPEN)" while
+# POSTing to the endpoint. Labels are in-code literals and never start with "--",
+# so the --*) arm can never swallow a real one.
+#
+# NOT usable for DELETE, and --method does not change that: api_delete sends no
+# body and returns only the HTTP status, while the success path below formats a
+# response BODY with the caller's jq expression. See docs/contributing.md and
+# cmd_pr_unrequest_changes, which hand-rolls the same loop shape for that reason.
 #
 # Arguments:
 #   $1 = label              human verb past tense (e.g. "approved by", "declined")
@@ -342,6 +356,25 @@ api_delete() {
 #   $3 = jq-success-msg     jq expression applied to response body for success suffix
 #   $@ = PR IDs
 batch_action() {
+    local method="POST" body="{}"
+    while [[ $# -gt 0 ]]; do
+        case "${1:-}" in
+            --method=*) method="${1#--method=}"; shift ;;
+            --body=*)   body="${1#--body=}"; shift ;;
+            --*)        die "Unknown flag: $1" ;;
+            *)          break ;;
+        esac
+    done
+    case "$method" in
+        POST|PUT) ;;
+        *) die "batch_action: unsupported method: $method (POST or PUT)" ;;
+    esac
+    # Loop-invariant — resolved once, not per id. A plain `if`, never
+    # `[[ ... ]] && api_fn=...`: as a statement the && form returns 1 when the
+    # condition is false, which under `set -e` fails the function. Same trap
+    # documented below for the inter-call sleep.
+    local api_fn="api_post"
+    if [[ "$method" == "PUT" ]]; then api_fn="api_put"; fi
     local label="$1" endpoint_tmpl="$2" jq_msg="$3"
     shift 3
     local id resp total=$# i=0
@@ -349,7 +382,7 @@ batch_action() {
         require_numeric "PR id" "$id"
         i=$((i + 1))
         local endpoint="${endpoint_tmpl//\{id\}/$id}"
-        if resp=$(api_post --soft "$endpoint" "{}"); then
+        if resp=$("$api_fn" --soft "$endpoint" "$body"); then
             local msg
             # Coerce null/empty to "ok" inside jq so we never print "(null)".
             msg=$(echo "$resp" | jq -r "($jq_msg) // \"ok\" | tostring" 2>/dev/null || echo "ok")
