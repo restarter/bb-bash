@@ -216,6 +216,43 @@ teardown() {
     [ "$status" -ne 0 ]
 }
 
+@test "pr create --draft: adds draft:true to the payload" {
+    stub_git --branch=feature/x "origin=https://bitbucket.org/ws/repo.git"
+    stub_curl '{"id":7,"links":{"html":{"href":"https://x/7"}}}' 200
+    run cmd_pr_create main "Title" "Some description" --draft
+    [ "$status" -eq 0 ]
+    contains "$(last_curl_call)" '*"draft":true*'
+    contains "$(last_curl_call)" '*"description":"Some description"*'
+}
+
+@test "pr create: without --draft sends no draft field" {
+    stub_git --branch=feature/x "origin=https://bitbucket.org/ws/repo.git"
+    stub_curl '{"id":7,"links":{"html":{"href":"https://x/7"}}}' 200
+    run cmd_pr_create main "Title" "Some description"
+    [ "$status" -eq 0 ]
+    not_contains "$(last_curl_call)" '*draft*'
+}
+
+# The flag is scanned out before the remaining args are joined, so it must not
+# leak into the description text.
+@test "pr create --draft: the flag does not leak into the description" {
+    stub_git --branch=feature/x "origin=https://bitbucket.org/ws/repo.git"
+    stub_curl '{"id":7,"links":{"html":{"href":"https://x/7"}}}' 200
+    run cmd_pr_create main "Title" --draft "Some description"
+    [ "$status" -eq 0 ]
+    contains "$(last_curl_call)" '*"description":"Some description"*'
+    not_contains "$(last_curl_call)" '*--draft*'
+}
+
+# require_args 2 counts arguments, so this reaches cmd_pr_create and would
+# otherwise open a PR titled "--draft".
+@test "pr create: --draft in the title position is rejected" {
+    stub_git --branch=feature/x "origin=https://bitbucket.org/ws/repo.git"
+    run cmd_pr_create main --draft
+    [ "$status" -ne 0 ]
+    contains "$output" '*Title is required*'
+}
+
 @test "pr inline: --old flag sends 'from' field + path + text in payload" {
     stub_curl '{"id":1,"inline":{"path":"x.ts","from":10},"links":{"html":{"href":"http://x"}}}' 200
     run cmd_pr_inline --old 5 "x.ts" 10 "old code comment"

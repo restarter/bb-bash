@@ -10,7 +10,8 @@
 #
 # Usage (see usage() for the live list; this header summarizes):
 #   bbb pr list [--state=<s>] [--author=<u>]   - List PRs (default: open)
-#   bbb pr create <target> <title> [desc]      - Create PR from current branch
+#   bbb pr create <target> <title> [desc] [--draft]
+#                                                 - Create PR from current branch; --draft opens it as a draft
 #   bbb pr update <id> [--title=...] [--description=...] [--reviewers=u1,u2] [--destination=<branch>]
 #                                                 - Update PR metadata; --destination retargets the PR
 #   bbb pr show <id>                           - PR details + changed files
@@ -596,10 +597,37 @@ cmd_pr_create() {
     local target="$1"
     local title="$2"
     shift 2
-    local description="${*:-}"
+
+    # --draft is scanned out of the remaining args BEFORE they are joined into
+    # the description; otherwise the flag would land inside the description text.
+    # Consequence, deliberate: a description consisting of the single bare word
+    # "--draft" cannot be expressed. A description that merely contains the word
+    # among others is unaffected.
+    #
+    # An explicit array walk rather than "${*:-}": on bash 3.2 (macOS) an empty
+    # array under `set -u` is an error even via [*], so the count is checked
+    # first. Same shape as the `filters` array in cmd_pr_list.
+    local draft=0
+    local parts=()
+    local a
+    for a in "$@"; do
+        if [[ "$a" == "--draft" ]]; then
+            draft=1
+        else
+            parts+=("$a")
+        fi
+    done
+    local description=""
+    if [[ ${#parts[@]} -gt 0 ]]; then
+        description="${parts[*]}"
+    fi
 
     [[ -n "$target" ]] || die "Target branch is required"
     [[ -n "$title" ]] || die "Title is required"
+    # The router's `require_args 2` counts arguments, so `bbb pr create main
+    # --draft` satisfies it and would otherwise open a PR titled "--draft".
+    [[ "$target" != --* ]] || die "Target branch is required (flags go after the title)"
+    [[ "$title" != --* ]] || die "Title is required (did you mean: bbb pr create <target> <title> --draft?)"
 
     local source
     source=$(git -C "$(pwd)" symbolic-ref --short HEAD 2>/dev/null) \
@@ -616,6 +644,13 @@ cmd_pr_create() {
         --arg src "$source" \
         --arg dst "$target" \
         '{title: $title, description: $desc, source: {branch: {name: $src}}, destination: {branch: {name: $dst}}}')
+
+    # Conditional, like cmd_pr_update's fields: an unflagged create keeps the
+    # exact payload it has always sent. Verified live — POST accepts draft:true
+    # and the PR comes back state=OPEN, draft=true.
+    if [[ $draft -eq 1 ]]; then
+        payload=$(echo "$payload" | jq -c '. + {draft: true}')
+    fi
 
     api_post "/pullrequests" "$payload" \
         | jq -r '"PR #\(.id) created: \(.links.html.href)"'
@@ -1475,7 +1510,7 @@ usage() {
     echo ""
     echo "Usage:"
     echo "  bbb pr list [--state=open|merged|declined|superseded|all] [--author=<user>]   List PRs"
-    echo "  bbb pr create <target> <title> [desc]        Create PR from current branch"
+    echo "  bbb pr create <target> <title> [desc] [--draft]  Create PR from current branch (--draft: as a draft)"
     echo "  bbb pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2] [--destination=<branch>]"
     echo "                                               Update PR metadata (--destination retargets)"
     echo "  bbb pr show <id>                             PR details + changed files"
