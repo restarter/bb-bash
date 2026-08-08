@@ -114,7 +114,11 @@ bbb pr unrequest-changes 42              # withdraw it once fixes land
 bbb pr decline 99 100                    # batch close-without-merge (destructive)
 bbb pr merge 42 --squash --delete-branch
 
+bbb pr draft 42                          # mark as draft (state stays OPEN)
+bbb pr ready 42                          # mark ready for review
+
 bbb pr create main "Title" "Description"
+bbb pr create main "Title" "Desc" --draft   # open it as a draft
 bbb pr update 42 --title="New title"
 bbb pr update 42 --destination=main       # retarget after the base PR merged
 bbb pr open 42                           # opens in browser

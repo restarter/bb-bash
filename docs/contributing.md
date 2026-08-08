@@ -72,9 +72,23 @@ cmd_pr_foo() {
 }
 ```
 
-`batch_action` handles: ID iteration, `api_post --soft` calls, per-PR status formatting, success/error branches, sleep between calls (configurable via `BB_BASH_BATCH_DELAY`).
+`batch_action` handles: ID iteration, the `--soft` API call, per-PR status formatting, success/error branches, sleep between calls (configurable via `BB_BASH_BATCH_DELAY`).
 
-**`batch_action` is POST-only.** It calls `api_post --soft` and formats the response body with the jq expression you pass. A batch command whose verb is `DELETE` cannot use it: `api_delete` sends no body and returns only the HTTP status code, so there is nothing for the jq expression to read. Such a command hand-rolls the same loop shape instead — per-id `require_numeric`, continue on failure, the same `BB_BASH_BATCH_DELAY` between calls — and branches on the status code. `cmd_pr_unrequest_changes` is the reference example. Keep the loop shape identical so the two read alike; in particular use a plain `if` for the inter-call sleep, never `[[ cond ]] && sleep …`, which returns 1 as the loop body's last command and fails the function under `set -e` on every single-id call.
+**POST is the default; PUT is opt-in.** Two optional leading flags cover a PUT-based batch command — `--method=PUT` and `--body=<json>`, defaulting to `POST` and `{}`:
+
+```bash
+cmd_pr_draft() {
+    require_args 1 $# "Usage: bbb pr draft <id> [id ...]"
+    batch_action --method=PUT --body='{"draft":true}' \
+        "marked draft" "/pullrequests/{id}" '.state // "ok"' "$@"
+}
+```
+
+An unrecognized `--flag` is fatal rather than falling through. Without that arm a typo like `--methd=PUT` matches neither pattern, lands in the **label** position, and the command prints `PR #12 --methd=PUT (OPEN)` while still POSTing. Labels are in-code literals that never start with `--`, so the guard can never swallow a real one.
+
+**`batch_action` still cannot do DELETE, and `--method` does not change that.** It formats the response **body** with the jq expression you pass, while `api_delete` sends no body and returns only the HTTP status code — there is nothing for the jq expression to read, and a DELETE arm would additionally need a status-based success branch. A batch command whose verb is `DELETE` hand-rolls the same loop shape instead — per-id `require_numeric`, continue on failure, the same `BB_BASH_BATCH_DELAY` between calls — and branches on the status code. `cmd_pr_unrequest_changes` is the reference example. Keep the loop shape identical so the two read alike; in particular use a plain `if` for the inter-call sleep, never `[[ cond ]] && sleep …`, which returns 1 as the loop body's last command and fails the function under `set -e` on every single-id call. The same trap governs the method dispatch inside `batch_action`, which is why it resolves `api_fn` with an `if` rather than `[[ … ]] &&`.
+
+A PUT-based batch command needs `api_put --soft`, which exists for exactly this reason: without it the first failing id `die`s and the remaining ids are never called, unlike every POST-based batch command.
 
 ## Renderers shared by two commands
 

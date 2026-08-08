@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `bbb pr draft <id> [id ...]` / `bbb pr ready <id> [id ...]` — toggle a PR between draft and ready-for-review. Batch-capable, and idempotent: Bitbucket returns 200 when the flag already holds the value being set. Draft is a boolean on the PR rather than a state — a draft PR is `state=OPEN, draft=true` — so `pr list --state=open` still returns drafts and there is no `--state=draft`. (bb-bash-smx)
+- `bbb pr create ... --draft` — open the new PR directly as a draft. The flag may appear anywhere after the title and is removed before the remaining arguments are joined into the description; it is rejected in the target or title position, so `bbb pr create main --draft` no longer creates a PR titled `--draft`. (bb-bash-smx)
+
+### Changed
+- `pr list` prints a `[draft]` marker after the state bracket for draft PRs, and `pr show` gained a `Draft:` line. The state bracket itself is unchanged, so anything parsing `[OPEN]` keeps working — but the `pr list` line is an output contract the AI artifacts point agents at, hence Changed rather than Added. (bb-bash-smx)
+- `api_put` gained a `--soft` mode mirroring `api_post`, and `batch_action` now takes optional `--method` / `--body` (defaulting to `POST` and `{}`) plus a fatal arm for an unrecognized flag, which previously fell through into the label position. `pr approve`, `pr decline` and `pr request-changes` send exactly what they sent before — now pinned by a test, since nothing asserted a batch call's outbound method or body until now. (bb-bash-smx)
+
 ## [0.3.1] - 2026-08-06
 
 ### Added
