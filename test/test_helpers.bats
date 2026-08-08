@@ -86,6 +86,20 @@ teardown() {
     contains "$output" '*API error*'
 }
 
+@test "api_put --soft: returns body on 4xx with non-zero exit" {
+    stub_curl '{"error":{"message":"not found"}}' 404
+    run api_put --soft "/some/endpoint" '{}'
+    [ "$status" -ne 0 ]
+    contains "$output" '*not found*'
+}
+
+@test "api_put (hard mode): dies on 4xx" {
+    stub_curl '{"error":{"message":"forbidden"}}' 403
+    run api_put "/some/endpoint" '{}'
+    [ "$status" -ne 0 ]
+    contains "$output" '*API error*'
+}
+
 @test "api_get --soft: returns body on 403 with non-zero exit" {
     stub_curl '{"error":{"message":"scope missing"}}' 403
     run api_get --soft "/pipelines/?target.ref_name=foo"

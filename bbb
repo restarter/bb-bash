@@ -291,7 +291,16 @@ api_post() {
     echo "$body"
 }
 
+# api_put [--soft] <endpoint> <data>
+# Default: dies on HTTP >=400.
+# --soft: prints body to stdout, returns 1 on HTTP >=400.
+# Mirrors api_post so a batch command can keep looping past one bad id.
 api_put() {
+    local soft=0
+    if [[ "${1:-}" == "--soft" ]]; then
+        soft=1
+        shift
+    fi
     local endpoint="$1"
     local data="$2"
     local url="${BASE_URL}${endpoint}"
@@ -304,6 +313,10 @@ api_put() {
     http_code=$(echo "$response" | tail -n1)
     body=$(echo "$response" | sed '$d')
     if [[ "$http_code" -ge 400 ]]; then
+        if [[ $soft -eq 1 ]]; then
+            echo "$body"
+            return 1
+        fi
         local msg
         msg=$(echo "$body" | jq -r '.error.message // .error // empty' 2>/dev/null || echo "$body")
         die "API error (HTTP $http_code): ${msg:-$body}"
