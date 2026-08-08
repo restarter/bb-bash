@@ -70,6 +70,18 @@ bbb pr merge <id> --squash --delete-branch
 bbb pr merge <id> --ff --message="Custom merge message"
 ```
 
+### Draft state
+
+Draft is a **boolean on the PR, not a value of `state`** — a draft PR is `state=OPEN` with `draft=true`. So `pr list --state=open` returns drafts too, and there is no `--state=draft` to filter by. Spot them by the `[draft]` marker `pr list` prints after the state bracket, or by the `Draft:` line in `pr show`.
+
+```bash
+bbb pr draft <id> [<id> ...]             # mark as draft; batch-capable
+bbb pr ready <id> [<id> ...]             # mark ready for review; batch-capable
+bbb pr create <target> "Title" "Desc" --draft   # open it as a draft
+```
+
+Both toggles are idempotent — marking an already-draft PR as draft returns success, not an error. `pr ready` publishes **your own** draft; it is not a review verdict and has nothing to do with `pr approve`. Bitbucket refuses to merge a draft, so `pr ready` comes before `pr merge`.
+
 ### Create / update
 
 ```bash

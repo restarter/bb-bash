@@ -25,6 +25,8 @@
 #   bbb pr approve <id> [id ...]               - Approve PR(s), batch-capable
 #   bbb pr request-changes <id> [id ...]       - Mark Changes Requested, PR stays open, batch-capable
 #   bbb pr unrequest-changes <id> [id ...]     - Withdraw Changes Requested, batch-capable
+#   bbb pr draft <id> [id ...]                 - Mark PR(s) as draft, batch-capable
+#   bbb pr ready <id> [id ...]                 - Mark draft PR(s) ready for review, batch-capable
 #   bbb pr decline <id> [id ...]               - Decline (close without merge), batch-capable
 #   bbb pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=...]
 #                                                 - Merge PR (default strategy: merge_commit)
@@ -1172,6 +1174,27 @@ cmd_pr_unrequest_changes() {
     done
 }
 
+# Draft state is a boolean ON the PR, not a value of .state: a draft PR is
+# state=OPEN with draft=true. Verified live (bb-bash-smx, 2026-08-07) — see
+# docs/design.md:
+#   - a draft-only PUT needs NO title resent, unlike --destination in pr update
+#   - it does not null description or reviewers
+#   - setting the flag to the value it already holds returns 200, so there is
+#     no "nothing to do" arm to write (contrast cmd_pr_unrequest_changes' 404)
+# The suffix reports .state rather than the draft flag: "marked draft (draft)"
+# says nothing, while (OPEN) confirms the PR is still open.
+cmd_pr_draft() {
+    require_args 1 $# "Usage: bbb pr draft <id> [id ...]"
+    batch_action --method=PUT --body='{"draft":true}' \
+        "marked draft" "/pullrequests/{id}" '.state // "ok"' "$@"
+}
+
+cmd_pr_ready() {
+    require_args 1 $# "Usage: bbb pr ready <id> [id ...]"
+    batch_action --method=PUT --body='{"draft":false}' \
+        "marked ready for review" "/pullrequests/{id}" '.state // "ok"' "$@"
+}
+
 # pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=<text>]
 # Default strategy: merge_commit (Bitbucket's most common UI default).
 # Explicit override via flags. No repo-default fetch (the API field
@@ -1465,7 +1488,9 @@ usage() {
     echo "  bbb pr inline [--old] <id> <path> <line> <text>  Inline comment (default new code, --old for deleted)"
     echo "  bbb pr approve <id> [id ...]                 Approve PR, batch-capable"
     echo "  bbb pr request-changes <id> [id ...]         Mark Changes Requested (PR stays open), batch-capable"
-    echo "  bbb pr unrequest-changes <id> [id ...]       Withdraw Changes Requested, batch-capable"
+    echo "  bbb pr unrequest-changes <id> [id ...]       Withdraw Changes Requested, batch-capable
+  bbb pr draft <id> [id ...]                   Mark PR(s) as draft, batch-capable
+  bbb pr ready <id> [id ...]                   Mark draft PR(s) ready for review, batch-capable"
     echo "  bbb pr decline <id> [id ...]                 Decline (close without merge), batch-capable"
     echo "  bbb pr merge <id> [--squash|--commit|--ff] [--delete-branch]  Merge PR (default: merge_commit)"
     echo "  bbb pr reply <pr_id> <comment_id> <text>   Reply to a comment"
@@ -1528,6 +1553,8 @@ main() {
                 decline)        cmd_pr_decline "$@" ;;
                 request-changes)   cmd_pr_request_changes "$@" ;;
                 unrequest-changes) cmd_pr_unrequest_changes "$@" ;;
+                draft)          cmd_pr_draft "$@" ;;
+                ready)          cmd_pr_ready "$@" ;;
                 merge)          cmd_pr_merge "$@" ;;
                 reply)          require_args 3 $# "Usage: bbb pr reply <pr_id> <comment_id> <text>"; cmd_pr_reply "$@" ;;
                 edit-comment)   require_args 3 $# "Usage: bbb pr edit-comment <pr_id> <comment_id> <text>"; cmd_pr_edit_comment "$@" ;;

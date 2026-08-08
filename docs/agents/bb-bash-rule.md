@@ -43,8 +43,12 @@ bbb pr unrequest-changes <id> [<id> ...] # withdraw it; batch-capable
 bbb pr decline <id> [<id> ...]           # DESTRUCTIVE: closes the PR; batch-capable
 bbb pr merge <id> [--squash|--commit|--ff] [--delete-branch]
 
+# Draft state
+bbb pr draft <id> [<id> ...]             # mark as draft; batch-capable
+bbb pr ready <id> [<id> ...]             # mark ready for review; batch-capable
+
 # Create / update
-bbb pr create <target_branch> "Title" "Description"
+bbb pr create <target_branch> "Title" "Description" [--draft]
 bbb pr update <id> --title="..." --description="..." --reviewers=u1,u2
 bbb pr update <id> --destination=main            # retarget a stacked PR after its base merged
 
@@ -77,7 +81,8 @@ bbb help
   ```
 
 - **Edit/delete** — Bitbucket only allows editing/deleting your own comments. Trying to touch another user's comment returns a 403. `pr edit-comment` is a **full-body replace** (REST PUT), not a patch — pass the complete new text.
-- **Batch operations** — `pr approve`, `pr request-changes`, `pr unrequest-changes` and `pr decline` accept multiple IDs and print one success line per PR.
+- **Batch operations** — `pr approve`, `pr request-changes`, `pr unrequest-changes`, `pr decline`, `pr draft` and `pr ready` accept multiple IDs and print one success line per PR.
+- **Draft is a flag, not a state** — a draft PR is `state=OPEN` with `draft=true`, so `pr list --state=open` returns drafts too and there is no `--state=draft`. Spot them by the `[draft]` marker `pr list` prints after the state bracket, or the `Draft:` line in `pr show`. `pr draft` / `pr ready` toggle the flag and are idempotent — re-marking an already-draft PR is a no-op, not an error. `pr ready` is unrelated to `pr approve`: it publishes your own draft, it does not review anyone's PR. Bitbucket refuses to merge a draft, so `pr ready` comes before `pr merge`.
 - **Requesting changes is not declining** — `pr request-changes` records the "needs work" review outcome and leaves the PR OPEN, so the author can push fixes. `pr decline` **closes** the PR without merging and is what you use to kill stale work, not to ask for changes. Withdraw a changes-request with `pr unrequest-changes` once the fixes land.
 - **Force-push effect** — Bitbucket Cloud marks inline comments as "outdated" when the referenced line changes; the comment is preserved (not removed). After a force-push, re-post on the new line rather than relying on the stale one.
 - **Before approve** — run `git fetch && git log <previous-approve-ref>..HEAD` to see if commits landed after your last review. Some repos have "Reset approvals on new commits" enabled (auto-dismiss); others don't — when in doubt, redo the review.

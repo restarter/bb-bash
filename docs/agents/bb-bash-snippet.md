@@ -48,8 +48,12 @@ bbb pr unrequest-changes <id> [<id> ...] # withdraw it; batch-capable
 bbb pr decline <id> [<id> ...]           # DESTRUCTIVE: closes the PR; batch-capable
 bbb pr merge <id> [--squash|--commit|--ff] [--delete-branch]
 
+# Draft state — a flag on top of OPEN, not a state of its own
+bbb pr draft <id> [<id> ...]             # mark as draft; batch-capable, idempotent
+bbb pr ready <id> [<id> ...]             # mark ready for review; batch-capable
+
 # Create / update
-bbb pr create <target_branch> "Title" "Description"
+bbb pr create <target_branch> "Title" "Description" [--draft]
 bbb pr update <id> --title="New title" --description="..." --reviewers=u1,u2
 bbb pr update <id> --destination=main            # retarget a stacked PR after its base merged
 
