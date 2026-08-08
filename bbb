@@ -590,7 +590,7 @@ cmd_pr_list() {
     fi
 
     api_get "/pullrequests?${query}" | jq -r '
-        .values[] | "PR #\(.id) [\(.state)] \(.title)\n  Author: \(.author.display_name)\n  Branch: \(.source.branch.name) -> \(.destination.branch.name)\n"'
+        .values[] | "PR #\(.id) [\(.state)]\(if .draft then " [draft]" else "" end) \(.title)\n  Author: \(.author.display_name)\n  Branch: \(.source.branch.name) -> \(.destination.branch.name)\n"'
 }
 
 cmd_pr_create() {
@@ -786,6 +786,7 @@ cmd_pr_show() {
         | ([.participants[]? | select(.role != "REVIEWER" and .state == "approved")]) as $extra
         | ([ "PR #\(.id): \(.title)",
              "State:       \(.state)",
+             "Draft:       \(if .draft then "yes" else "no" end)",
              "Author:      \(.author.display_name)",
              "Branch:      \(.source.branch.name) -> \(.destination.branch.name)",
              "Reviewers:   " + (if ($revs | length) == 0 then "(none assigned)"

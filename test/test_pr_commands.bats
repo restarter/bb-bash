@@ -253,6 +253,42 @@ teardown() {
     contains "$output" '*Title is required*'
 }
 
+# The escaped brackets are load-bearing: `contains` matches a shell GLOB, so an
+# unescaped '[OPEN]' is the character class O/P/E/N. In the not_contains case
+# below an unescaped class would pass silently and test nothing.
+@test "pr list: marks a draft PR without touching the state bracket" {
+    stub_curl '{"values":[{"id":12,"state":"OPEN","draft":true,"title":"T","author":{"display_name":"A"},"source":{"branch":{"name":"s"}},"destination":{"branch":{"name":"d"}}}]}' 200
+    run cmd_pr_list
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #12 \[OPEN\] \[draft\] T*'
+}
+
+@test "pr list: leaves a non-draft PR line unchanged" {
+    stub_curl '{"values":[{"id":11,"state":"OPEN","draft":false,"title":"T","author":{"display_name":"A"},"source":{"branch":{"name":"s"}},"destination":{"branch":{"name":"d"}}}]}' 200
+    run cmd_pr_list
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #11 \[OPEN\] T*'
+    not_contains "$output" '*\[draft\]*'
+}
+
+@test "pr show: reports draft state" {
+    stub_curl_seq \
+        200 '{"id":12,"state":"OPEN","draft":true,"title":"T","author":{"display_name":"A"},"source":{"branch":{"name":"s"}},"destination":{"branch":{"name":"d"}},"participants":[],"links":{"html":{"href":"https://x/12"}}}' \
+        200 '{"values":[]}'
+    run cmd_pr_show 12
+    [ "$status" -eq 0 ]
+    contains "$output" '*Draft:       yes*'
+}
+
+@test "pr show: reports a non-draft PR as no" {
+    stub_curl_seq \
+        200 '{"id":12,"state":"OPEN","draft":false,"title":"T","author":{"display_name":"A"},"source":{"branch":{"name":"s"}},"destination":{"branch":{"name":"d"}},"participants":[],"links":{"html":{"href":"https://x/12"}}}' \
+        200 '{"values":[]}'
+    run cmd_pr_show 12
+    [ "$status" -eq 0 ]
+    contains "$output" '*Draft:       no*'
+}
+
 @test "pr inline: --old flag sends 'from' field + path + text in payload" {
     stub_curl '{"id":1,"inline":{"path":"x.ts","from":10},"links":{"html":{"href":"http://x"}}}' 200
     run cmd_pr_inline --old 5 "x.ts" 10 "old code comment"
