@@ -255,6 +255,68 @@ api_get() {
     echo "$body"
 }
 
+# api_get_paged <endpoint>
+# Fetch a Bitbucket collection completely and emit one JSON object whose
+# .values contains every fetched page. Bitbucket returns .next as an absolute
+# URL; only follow URLs under this repository's BASE_URL so response data can
+# never redirect an authenticated request to another host or repository.
+#
+# BB_BASH_MAX_PAGES is a safety valve for unexpectedly deep or cyclic result
+# sets (default 100, max 1000). If the cap is reached, stdout remains valid JSON
+# containing the values fetched so far and stderr carries an explicit warning.
+api_get_paged() {
+    local endpoint="$1"
+    local raw_max_pages="${BB_BASH_MAX_PAGES:-100}"
+    require_numeric "BB_BASH_MAX_PAGES" "$raw_max_pages"
+    # Normalize leading zeroes before validation. Feeding an arbitrarily long
+    # digit string to Bash arithmetic can wrap (on Bash 3.2, 2^64+1 becomes 1)
+    # and turn an invalid value into an accepted one.
+    local max_pages="$raw_max_pages"
+    while [[ "${#max_pages}" -gt 1 && "$max_pages" == 0* ]]; do
+        max_pages="${max_pages#0}"
+    done
+    case "$max_pages" in
+        [1-9]|[1-9][0-9]|[1-9][0-9][0-9]|1000) ;;
+        *) die "BB_BASH_MAX_PAGES must be 1-1000, got: $raw_max_pages" ;;
+    esac
+
+    local collection_path="${endpoint%%\?*}"
+    local merged='{"values":[]}' page next next_endpoint next_path pages=0
+    while true; do
+        page=$(api_get "$endpoint")
+        echo "$page" | jq -e '(.values | type) == "array"' >/dev/null 2>&1 \
+            || die "invalid paginated response from Bitbucket: .values is not an array"
+        merged=$(printf '%s\n%s\n' "$merged" "$page" | jq -cs '
+            .[1] + {values: ((.[0].values // []) + .[1].values)}') \
+            || die "could not merge paginated response from Bitbucket"
+        pages=$((pages + 1))
+        next=$(echo "$page" | jq -r '.next // empty') \
+            || die "invalid paginated response from Bitbucket: could not read .next"
+        [[ -n "$next" ]] || break
+
+        if [[ "$pages" -ge "$max_pages" ]]; then
+            echo "Warning: pagination stopped after ${pages} page(s); more results remain" >&2
+            break
+        fi
+
+        case "$next" in
+            "${BASE_URL}"/*)
+                next_endpoint="${next#"$BASE_URL"}"
+                next_path="${next_endpoint%%\?*}"
+                # Pin every page to the exact original collection path. This
+                # rejects literal or encoded dot segments before curl can
+                # normalize them into a sibling-repository request.
+                [[ "$next_path" == "$collection_path" ]] \
+                    || die "pagination next URL changed collection path: $next"
+                endpoint="$next_endpoint"
+                ;;
+            *) die "pagination next URL is outside the current repository: $next" ;;
+        esac
+    done
+
+    printf '%s\n' "$merged"
+}
+
 # api_post [--soft] <endpoint> <data>
 # Default: dies on HTTP >=400.
 # --soft: prints body to stdout, returns 1 on HTTP >=400.
@@ -540,7 +602,7 @@ cmd_pr_list() {
         query="${query}&q=${q_encoded}"
     fi
 
-    api_get "/pullrequests?${query}" | jq -r '
+    api_get_paged "/pullrequests?${query}" | jq -r '
         .values[] | "PR #\(.id) [\(.state)] \(.title)\n  Author: \(.author.display_name)\n  Branch: \(.source.branch.name) -> \(.destination.branch.name)\n"'
 }
 
@@ -841,7 +903,7 @@ cmd_pr_checks() {
     # 1) PR-level statuses (external CI: GH Actions, Jenkins, etc.)
     echo "--- PR statuses ---"
     local statuses
-    statuses=$(api_get "/pullrequests/${pr_id}/statuses?pagelen=50")
+    statuses=$(api_get_paged "/pullrequests/${pr_id}/statuses?pagelen=50")
     local status_count
     status_count=$(echo "$statuses" | jq -r '.values | length')
     if [[ "$status_count" -eq 0 ]]; then
@@ -895,7 +957,7 @@ pipeline_step_log() {
     uuid_enc=$(urlencode "$uuid")
     # pagelen: the steps endpoint defaults to 10, which would silently make the
     # "last step" the tenth on a longer pipeline.
-    steps=$(api_get "/pipelines/${uuid_enc}/steps/?pagelen=100")
+    steps=$(api_get_paged "/pipelines/${uuid_enc}/steps/?pagelen=100")
 
     if [[ -n "$step_n" ]]; then
         require_numeric "--step" "$step_n"
@@ -1032,8 +1094,10 @@ cmd_pr_logs() {
 cmd_pr_comments() {
     local pr_id="$1"
     require_numeric "PR id" "$pr_id"
-    api_get "/pullrequests/${pr_id}/comments?pagelen=100" | jq -r '
-        .values[]
+    api_get_paged "/pullrequests/${pr_id}/comments?pagelen=100" | jq -r '
+        .values
+        | sort_by([(.created_on // ""), (.id // 0)])
+        | reverse[]
         | select(.deleted != true)
         | "[#\(.id)] [\(.created_on[:16])] \(.user.display_name)" +
           (if .inline then " @ \(.inline.path):\(.inline.to // .inline.from)" else "" end) +
@@ -1414,7 +1478,7 @@ usage() {
     echo "  bbb pr diff <id> [--stat]                    Full diff (--stat: file count and +/- only)"
     echo "  bbb pr checks <id>                           Show CI statuses + Bitbucket Pipelines"
     echo "  bbb pr logs <id> [--step=N]                  Pipeline step log for a PR"
-    echo "  bbb pr comments <id>                         List comments"
+    echo "  bbb pr comments <id>                         List all comments, newest first"
     echo "  bbb pr comment <id> <text>                   Add general comment"
     echo "  bbb pr inline [--old] <id> <path> <line> <text>  Inline comment (default new code, --old for deleted)"
     echo "  bbb pr approve <id> [id ...]                 Approve PR, batch-capable"
@@ -1444,6 +1508,7 @@ usage() {
     echo "  BB_BASH_REMOTE         Git remote name override  (optional, default: scan for bitbucket.org)"
     echo "  BB_BASH_REF            Git ref for install-agent (optional, default: main)"
     echo "  BB_BASH_PIPELINE_SCAN  Recent pipelines scanned   (optional, default: 20, max: 100)"
+    echo "  BB_BASH_MAX_PAGES     Collection page safety cap  (optional, default: 100, max: 1000)"
     echo ""
     echo "Copy .env.example to .env and fill in your values."
 }

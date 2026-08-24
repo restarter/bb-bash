@@ -95,6 +95,21 @@ render_foo() {
 
 Two rules the reference follows. **One fetch per call** — a caller that needs both a summary and a list must not pay for the endpoint twice, so the body is captured into a variable and each renderer reads that. And **the optional part is opt-in, not the default**: adding the totals line to `pr show` would have changed the output of a shipped command for no reason, so the extra line belongs to the caller that asked for it.
 
+## Paginated collection readers
+
+Use `api_get_paged` when a routed command promises a complete Bitbucket collection:
+
+```bash
+body=$(api_get_paged "/pullrequests/${id}/comments?pagelen=100")
+echo "$body" | jq -r '.values[] | ...'
+```
+
+Do not hand-roll `.next` loops in command functions. The shared helper validates that an absolute next URL remains under the current repository and on the original collection path, merges `.values`, enforces `BB_BASH_MAX_PAGES`, and warns if the cap leaves more results.
+
+Keep deliberately bounded views bounded and explicit. Pipeline discovery is a recent-window scan controlled by `BB_BASH_PIPELINE_SCAN`; diffstat has a 100-file cap and a truncation notice. Those are not candidates for automatic full pagination unless their output contracts change intentionally.
+
+For multi-page tests, queue one response per page with `stub_curl_seq`, assert every next endpoint was requested, and prove values on later pages affect the rendered result. If output order matters, construct pages in the API's natural order and assert the final global order rather than supplying already-sorted fixtures.
+
 ## Testing pattern (REQUIRED)
 
 Always capture outbound payload to catch wrong-field bugs. The `last_curl_call` helper returns the most recent curl invocation args:

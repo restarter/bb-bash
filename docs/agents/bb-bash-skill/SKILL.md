@@ -39,7 +39,7 @@ bbb pr list --state=all
 bbb pr show <id>                         # title, branches, author, files + review state
 bbb pr diff <id>                         # full unified diff
 bbb pr diff <id> --stat                  # size only: N files, +X -Y (never fetches the diff)
-bbb pr comments <id>                     # general + inline, with comment IDs
+bbb pr comments <id>                     # all pages, newest first, with comment IDs
 bbb pr checks <id>                       # CI statuses + Pipelines (graceful-degrade if token lacks read:pipeline)
 bbb pr logs <id> [--step=N]              # newest pipeline's log; first failed step by default
 bbb pipeline log <build#> [--step=N]     # same, by build number (falls back to the last step)

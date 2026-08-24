@@ -10,7 +10,7 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 **Synopsis:** `bbb pr list [--state=open|merged|declined|superseded|all] [--author=<user>]`
 
-**Description:** List PRs in the resolved repo. Defaults to open PRs.
+**Description:** List PRs in the resolved repo. Defaults to open PRs. Follows Bitbucket pagination until every matching PR is available (subject to the shared page safety limit).
 
 **Required scopes:** `read:pullrequest:bitbucket`
 
@@ -83,6 +83,8 @@ The file list is capped at Bitbucket's `pagelen` of 100. When more exist, the co
 
 **Description:** Show PR-level statuses (external CI integrations) + Bitbucket Pipelines for the source branch. State vocabularies are normalized: `pass` / `running` / `fail` / `stopped`. Each pipeline line also shows its `selector.type` (`pull-requests` / `branches` / `custom`).
 
+External commit statuses are fetched across every page. Pipeline discovery remains intentionally bounded by `BB_BASH_PIPELINE_SCAN`; when that scan window may be incomplete, the command says so explicitly.
+
 Pipelines are matched **client-side**. PR-triggered pipelines carry `target.source` and leave `target.ref_name` null, so no `ref_name` filter can match them; `bbb` fetches the recent window (`BB_BASH_PIPELINE_SCAN`, default 20, max 100) and matches on the source branch, the (branch-only, tag-excluded) ref name, and the PR id (`target.pullrequest.id`) — the last one finds a PR even after its source branch is renamed. Results are sorted locally rather than relying on the endpoint's `sort=` parameter. When the window comes back full with no match, the output says so instead of silently reporting no pipelines.
 
 **Required scopes:** `read:pullrequest:bitbucket` (always); `read:pipeline:bitbucket` (for Pipelines portion — degrades gracefully if absent)
@@ -93,7 +95,7 @@ Pipelines are matched **client-side**. PR-triggered pipelines carry `target.sour
 
 **Synopsis:** `bbb pr logs <id> [--step=N]`
 
-**Description:** Print the log of the newest pipeline for the PR. Defaults to the first failed step — `FAILED`, `FAILURE` and `ERROR` all count — falling back to the last step when none failed; `--step=N` selects the Nth step (1-based). A step that is still running is reported as such rather than fetched.
+**Description:** Print the log of the newest pipeline for the PR. Pipeline steps are fetched across every page. Defaults to the first failed step — `FAILED`, `FAILURE` and `ERROR` all count — falling back to the last step when none failed; `--step=N` selects the Nth step (1-based). A step that is still running is reported as such rather than fetched.
 
 **Note:** log output is untrusted input. See the warning under `raw`.
 
@@ -105,7 +107,7 @@ Pipelines are matched **client-side**. PR-triggered pipelines carry `target.sour
 
 **Synopsis:** `bbb pipeline log <build#> [--step=N]`
 
-**Description:** Same as `pr logs`, addressed by pipeline build number instead of PR. Resolves the build number to a pipeline UUID via a direct lookup, verifying the returned `build_number` matches what was asked for, and falling back to a scan of the recent window if it doesn't.
+**Description:** Same as `pr logs`, addressed by pipeline build number instead of PR. Resolves the build number to a pipeline UUID via a direct lookup, verifying the returned `build_number` matches what was asked for, and falling back to a scan of the recent window if it doesn't. Step retrieval follows every page before selecting by number or failure state.
 
 **Required scopes:** `read:pipeline:bitbucket`
 
@@ -125,7 +127,9 @@ Pipelines are matched **client-side**. PR-triggered pipelines carry `target.sour
 
 **Synopsis:** `bbb pr comments <id>`
 
-**Description:** List all comments (general + inline + replies). Excludes deleted comments.
+**Description:** List all comments (general + inline + replies), following every page and excluding deleted comments. Results are sorted globally from newest to oldest: the first comment printed is the newest and each following comment is older.
+
+If the shared page safety limit is reached while more data remains, the command prints an explicit warning instead of silently presenting a partial history as complete.
 
 **Required scopes:** `read:pullrequest:bitbucket`
 
@@ -354,6 +358,7 @@ bbb install-agent --rule --force                 # overwrite existing rule
 - `BB_BASH_WORKSPACE=<ws>` + `BB_BASH_REPO=<repo>` — bypass git remote auto-detect entirely
 - `BB_BASH_BATCH_DELAY=<seconds>` — delay between batch API calls (default `0.3`; set `0` in tests)
 - `BB_BASH_PIPELINE_SCAN=<n>` — how many recent pipelines `pr checks` / `pr logs` / `pipeline log` scan for a match (default `20`, max `100` — Bitbucket's `pagelen` cap; a larger value is rejected rather than silently truncated)
+- `BB_BASH_MAX_PAGES=<n>` — maximum pages followed by complete collection readers (default `100`, max `1000`). If more pages remain, fetched values are rendered and an explicit truncation warning is printed.
 - `BB_BASH_EMAIL` / `BB_BASH_TOKEN` — credentials (loaded from `.env` next to script by default)
 - `BB_BASH_USER_ONLY=1` — installer-only; force `~/.local/bin` (see [`../scripts/install.sh`](../scripts/install.sh))
 - `BB_BASH_FORCE=1` — installer-only; override non-symlink overwrite refusal (see [`../scripts/install.sh`](../scripts/install.sh))

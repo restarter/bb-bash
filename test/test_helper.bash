@@ -126,7 +126,7 @@ load_bbb() {
     export BB_BASH_EMAIL="test@example.com"
     export BB_BASH_TOKEN="test-token"
     export BB_BASH_BATCH_DELAY="0"
-    unset BB_BASH_REMOTE BB_BASH_WORKSPACE BB_BASH_REPO BB_BASH_PIPELINE_SCAN
+    unset BB_BASH_REMOTE BB_BASH_WORKSPACE BB_BASH_REPO BB_BASH_PIPELINE_SCAN BB_BASH_MAX_PAGES
 
     # shellcheck source=/dev/null
     source "$BB_BASH_SCRIPT"
@@ -202,6 +202,27 @@ body=\$(cat "$STUB_DIR/.curl_seq.\${idx}.body")
 code=\$(cat "$STUB_DIR/.curl_seq.\${idx}.code")
 echo \$((idx + 1)) > "$STUB_DIR/.curl_seq.idx"
 printf '%s\\n%s' "\$body" "\$code"
+EOF
+    chmod +x "$STUB_DIR/curl"
+}
+
+# stub_curl_then_fail <first-body> [curl-exit-code]
+# First call succeeds with HTTP 200 and <first-body>; the second and any later
+# call fails at the transport layer. Used to prove a later pagination request
+# preserves api_get's fatal curl-error contract.
+stub_curl_then_fail() {
+    local body="$1" fail_code="${2:-6}"
+    printf '0\n' > "$STUB_DIR/.curl_then_fail.idx"
+    cat >"$STUB_DIR/curl" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$STUB_DIR/.calls"
+idx=\$(cat "$STUB_DIR/.curl_then_fail.idx")
+echo \$((idx + 1)) > "$STUB_DIR/.curl_then_fail.idx"
+if [[ "\$idx" -eq 0 ]]; then
+    printf '%s\n%s' $(printf %q "$body") 200
+    exit 0
+fi
+exit $fail_code
 EOF
     chmod +x "$STUB_DIR/curl"
 }
