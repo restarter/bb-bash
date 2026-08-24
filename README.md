@@ -98,7 +98,7 @@ bbb pr diff 42
 bbb pr checks 42                         # CI + pipelines status
 bbb pr logs 42                           # log of the newest pipeline for this PR
 bbb pipeline log 137                     # log by pipeline build number
-bbb pr comments 42                       # general + inline comments
+bbb pr comments 42                       # all general + inline comments, newest first
 
 bbb pr comment 42 "general comment"
 bbb pr inline 42 src/auth.ts 30 "consider extracting"

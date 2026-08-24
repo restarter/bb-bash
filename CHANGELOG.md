@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Paginated PR readers no longer silently stop at the first page. `pr comments` now fetches the complete conversation and renders comments newest-first across all pages; `pr list`, external statuses in `pr checks`, and pipeline steps also use the shared complete-pagination helper. Absolute `.next` URLs are restricted to the current repository, and `BB_BASH_MAX_PAGES` (default 100, max 1000) emits an explicit warning if its safety cap leaves more results. Intentionally bounded pipeline discovery and diffstat retain their existing scan/truncation notices. (bb-bash-z8f)
+
 ## [0.3.1] - 2026-08-06
 
 ### Added
