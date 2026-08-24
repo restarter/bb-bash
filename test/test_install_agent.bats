@@ -33,6 +33,8 @@ _run_bbb() {
     contains "$output" "*--skill*"
     contains "$output" "*--claude*"
     contains "$output" "*--agents*"
+    contains "$output" "*--claude-code*"
+    contains "$output" "*--codex*"
     contains "$output" "*BB_BASH_REF*"
 }
 
@@ -102,6 +104,15 @@ _run_bbb() {
     grep -q "new body" "$TEST_TMP/.claude/rules/bb-bash-rule.md"
 }
 
+@test "install-agent: failed --force download preserves existing artifact" {
+    mkdir -p "$TEST_TMP/.claude/rules"
+    printf 'existing\n' > "$TEST_TMP/.claude/rules/bb-bash-rule.md"
+    stub_curl_fail 6
+    _run_bbb install-agent --rule --force
+    [ "$status" -ne 0 ]
+    grep -q '^existing$' "$TEST_TMP/.claude/rules/bb-bash-rule.md"
+}
+
 # --- CLAUDE.md / AGENTS.md modes ---
 
 @test "install-agent: --claude creates CLAUDE.md when missing" {
@@ -114,7 +125,7 @@ content"
     contains "$output" "*created*"
 }
 
-@test "install-agent: --claude appends to existing CLAUDE.md without bbb section" {
+@test "install-agent: --claude preserves existing CLAUDE.md content and adds markers" {
     echo "# My project" > "$TEST_TMP/CLAUDE.md"
     stub_curl_download "## Bitbucket via bb-bash
 content"
@@ -122,27 +133,30 @@ content"
     [ "$status" -eq 0 ]
     grep -q "My project" "$TEST_TMP/CLAUDE.md"
     grep -q "Bitbucket via bb-bash" "$TEST_TMP/CLAUDE.md"
-    grep -q "^---$" "$TEST_TMP/CLAUDE.md"
-    contains "$output" "*appended*"
+    grep -q '<!-- bb-bash:start -->' "$TEST_TMP/CLAUDE.md"
+    grep -q '<!-- bb-bash:end -->' "$TEST_TMP/CLAUDE.md"
+    contains "$output" "*updated*"
 }
 
-@test "install-agent: --claude skips when CLAUDE.md already has bbb section" {
+@test "install-agent: legacy unmarked CLAUDE.md section skips with migration message" {
     printf '# Project\n\n## Bitbucket via bb-bash\nold content\n' > "$TEST_TMP/CLAUDE.md"
     stub_curl_download "new content"
     _run_bbb install-agent --claude
     [ "$status" -eq 0 ]
-    contains "$output" "*already has*"
+    contains "$output" "*legacy unmarked section*"
     grep -q "old content" "$TEST_TMP/CLAUDE.md"
 }
 
-@test "install-agent: --claude --force re-appends even when section exists" {
+@test "install-agent: --claude --force migrates legacy trailing section without duplication" {
     printf '# Project\n\n## Bitbucket via bb-bash\nold content\n' > "$TEST_TMP/CLAUDE.md"
     stub_curl_download "## Bitbucket via bb-bash
 new content"
     _run_bbb install-agent --claude --force
     [ "$status" -eq 0 ]
-    contains "$output" "*appended*"
-    [ "$(grep -c 'Bitbucket via bb-bash' "$TEST_TMP/CLAUDE.md")" = "2" ]
+    contains "$output" "*updated*"
+    [ "$(grep -c '<!-- bb-bash:start -->' "$TEST_TMP/CLAUDE.md")" = "1" ]
+    [ "$(grep -c 'Bitbucket via bb-bash' "$TEST_TMP/CLAUDE.md")" = "1" ]
+    ! grep -q 'old content' "$TEST_TMP/CLAUDE.md"
 }
 
 @test "install-agent: --agents writes AGENTS.md (parallel to --claude)" {
@@ -183,10 +197,10 @@ combined content"
     contains "$output" "*--global requires*"
 }
 
-@test "install-agent: --agents --global dies (no standard global AGENTS.md)" {
+@test "install-agent: legacy --agents --global targets Codex AGENTS.md" {
     HOME="$TEST_TMP/h" _run_bbb install-agent --agents --global --dry-run
-    [ "$status" -ne 0 ]
-    contains "$output" "*--agents incompatible with --global*"
+    [ "$status" -eq 0 ]
+    contains "$output" "*$TEST_TMP/h/.codex/AGENTS.md*"
 }
 
 @test "install-agent: --rule --global writes to \$HOME/.claude/rules/" {
@@ -217,6 +231,157 @@ snippet body" 200
     grep -q "Bitbucket via bb-bash" "$TEST_TMP/h/.claude/CLAUDE.md"
     # Project-level CLAUDE.md should NOT have been touched
     [ ! -e "$TEST_TMP/CLAUDE.md" ]
+}
+
+# --- native Claude Code and Codex presets ---
+
+@test "install-agent: --claude-code installs project rule and lazy skill" {
+    stub_curl_download "canonical artifact"
+    _run_bbb install-agent --claude-code
+    [ "$status" -eq 0 ]
+    [ -f "$TEST_TMP/.claude/rules/bb-bash-rule.md" ]
+    [ -f "$TEST_TMP/.claude/skills/bb-bash/SKILL.md" ]
+}
+
+@test "install-agent: --claude-code --global installs user rule and lazy skill" {
+    stub_curl_download "canonical artifact"
+    HOME="$TEST_TMP/home with spaces" _run_bbb install-agent --claude-code --global
+    [ "$status" -eq 0 ]
+    [ -f "$TEST_TMP/home with spaces/.claude/rules/bb-bash-rule.md" ]
+    [ -f "$TEST_TMP/home with spaces/.claude/skills/bb-bash/SKILL.md" ]
+}
+
+@test "install-agent: --codex installs project AGENTS section and lazy skill" {
+    stub_curl_download "## Bitbucket Cloud via bb-bash
+canonical artifact"
+    _run_bbb install-agent --codex
+    [ "$status" -eq 0 ]
+    [ -f "$TEST_TMP/AGENTS.md" ]
+    [ -f "$TEST_TMP/.agents/skills/bb-bash/SKILL.md" ]
+    [ "$(grep -c '<!-- bb-bash:start -->' "$TEST_TMP/AGENTS.md")" = "1" ]
+}
+
+@test "install-agent: --codex --global installs effective AGENTS and HOME skill" {
+    stub_curl_download "canonical artifact"
+    HOME="$TEST_TMP/home" _run_bbb install-agent --codex --global
+    [ "$status" -eq 0 ]
+    [ -f "$TEST_TMP/home/.codex/AGENTS.md" ]
+    [ -f "$TEST_TMP/home/.agents/skills/bb-bash/SKILL.md" ]
+    contains "$output" "*$TEST_TMP/home/.codex/AGENTS.md*"
+    contains "$output" "*$TEST_TMP/home/.agents/skills/bb-bash/SKILL.md*"
+}
+
+@test "install-agent: custom CODEX_HOME changes global instruction but not skill" {
+    stub_curl_download "canonical artifact"
+    HOME="$TEST_TMP/home" CODEX_HOME="$TEST_TMP/custom codex" \
+        _run_bbb install-agent --codex --global
+    [ "$status" -eq 0 ]
+    [ -f "$TEST_TMP/custom codex/AGENTS.md" ]
+    [ -f "$TEST_TMP/home/.agents/skills/bb-bash/SKILL.md" ]
+    [ ! -e "$TEST_TMP/custom codex/skills/bb-bash/SKILL.md" ]
+}
+
+@test "install-agent: non-empty AGENTS.override.md takes global precedence" {
+    mkdir -p "$TEST_TMP/codex"
+    printf '# Keep override\n' > "$TEST_TMP/codex/AGENTS.override.md"
+    stub_curl_download "canonical artifact"
+    HOME="$TEST_TMP/home" CODEX_HOME="$TEST_TMP/codex" \
+        _run_bbb install-agent --codex --global
+    [ "$status" -eq 0 ]
+    grep -q 'Keep override' "$TEST_TMP/codex/AGENTS.override.md"
+    grep -q '<!-- bb-bash:start -->' "$TEST_TMP/codex/AGENTS.override.md"
+    [ ! -e "$TEST_TMP/codex/AGENTS.md" ]
+}
+
+@test "install-agent: empty AGENTS.override.md falls back to global AGENTS.md" {
+    mkdir -p "$TEST_TMP/codex"
+    : > "$TEST_TMP/codex/AGENTS.override.md"
+    stub_curl_download "canonical artifact"
+    HOME="$TEST_TMP/home" CODEX_HOME="$TEST_TMP/codex" \
+        _run_bbb install-agent --codex --global
+    [ "$status" -eq 0 ]
+    [ ! -s "$TEST_TMP/codex/AGENTS.override.md" ]
+    [ -f "$TEST_TMP/codex/AGENTS.md" ]
+}
+
+@test "install-agent: managed AGENTS section updates in place without duplicates" {
+    printf '# Before\n\n<!-- bb-bash:start -->\nold\n<!-- bb-bash:end -->\n\n# After\n' > "$TEST_TMP/AGENTS.md"
+    stub_curl_download "new content"
+    _run_bbb install-agent --agents
+    [ "$status" -eq 0 ]
+    grep -q '^# Before$' "$TEST_TMP/AGENTS.md"
+    grep -q '^# After$' "$TEST_TMP/AGENTS.md"
+    grep -q 'new content' "$TEST_TMP/AGENTS.md"
+    ! grep -q '^old$' "$TEST_TMP/AGENTS.md"
+    [ "$(grep -c '<!-- bb-bash:start -->' "$TEST_TMP/AGENTS.md")" = "1" ]
+
+    cp -f "$TEST_TMP/AGENTS.md" "$TEST_TMP/after-first-install"
+    _run_bbb install-agent --agents
+    [ "$status" -eq 0 ]
+    [ "$(grep -c '<!-- bb-bash:start -->' "$TEST_TMP/AGENTS.md")" = "1" ]
+    cmp "$TEST_TMP/after-first-install" "$TEST_TMP/AGENTS.md"
+    contains "$output" "*skipped*current*"
+}
+
+@test "install-agent: malformed managed markers fail without changing file" {
+    printf '# Keep\n<!-- bb-bash:start -->\nbroken\n' > "$TEST_TMP/AGENTS.md"
+    cp -f "$TEST_TMP/AGENTS.md" "$TEST_TMP/before"
+    stub_curl_download "new content"
+    _run_bbb install-agent --agents --force
+    [ "$status" -ne 0 ]
+    cmp "$TEST_TMP/before" "$TEST_TMP/AGENTS.md"
+}
+
+@test "install-agent: reversed managed markers fail without changing file" {
+    printf '# Keep\n<!-- bb-bash:end -->\nbroken\n<!-- bb-bash:start -->\n' > "$TEST_TMP/AGENTS.md"
+    cp -f "$TEST_TMP/AGENTS.md" "$TEST_TMP/before"
+    stub_curl_download "new content"
+    _run_bbb install-agent --agents --force
+    [ "$status" -ne 0 ]
+    cmp "$TEST_TMP/before" "$TEST_TMP/AGENTS.md"
+}
+
+@test "install-agent: --force refuses ambiguous non-trailing legacy section" {
+    printf '# Project\n\n## Bitbucket via bb-bash\nold\n\n## Unrelated\nkeep\n' > "$TEST_TMP/AGENTS.md"
+    cp -f "$TEST_TMP/AGENTS.md" "$TEST_TMP/before"
+    stub_curl_download "new content"
+    _run_bbb install-agent --agents --force
+    [ "$status" -ne 0 ]
+    contains "$output" "*not trailing*"
+    cmp "$TEST_TMP/before" "$TEST_TMP/AGENTS.md"
+}
+
+@test "install-agent: Codex global dry-run reports both paths and writes nothing" {
+    HOME="$TEST_TMP/home" CODEX_HOME="$TEST_TMP/codex" \
+        _run_bbb install-agent --codex --global --dry-run
+    [ "$status" -eq 0 ]
+    contains "$output" "*$TEST_TMP/codex/AGENTS.md*"
+    contains "$output" "*$TEST_TMP/home/.agents/skills/bb-bash/SKILL.md*"
+    [ ! -e "$TEST_TMP/codex" ]
+    [ ! -e "$TEST_TMP/home" ]
+    [ ! -f "$STUB_DIR/.calls" ] || [ ! -s "$STUB_DIR/.calls" ]
+}
+
+@test "install-agent: project preset works from a path containing spaces" {
+    mkdir -p "$TEST_TMP/project with spaces"
+    cd "$TEST_TMP/project with spaces" || exit 1
+    stub_curl_download "canonical artifact"
+    _run_bbb install-agent --codex
+    [ "$status" -eq 0 ]
+    [ -f "$TEST_TMP/project with spaces/AGENTS.md" ]
+    [ -f "$TEST_TMP/project with spaces/.agents/skills/bb-bash/SKILL.md" ]
+}
+
+@test "install-agent: installed Codex skill exactly matches canonical repository artifact" {
+    local repo_root canonical
+    repo_root="$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)"
+    canonical="$(cat "$repo_root/docs/agents/bb-bash-skill/SKILL.md"; printf x)"
+    canonical="${canonical%x}"
+    stub_curl_download "$canonical"
+    _run_bbb install-agent --codex
+    [ "$status" -eq 0 ]
+    cmp "$repo_root/docs/agents/bb-bash-skill/SKILL.md" \
+        "$TEST_TMP/.agents/skills/bb-bash/SKILL.md"
 }
 
 # --- URL→file mapping regression (bb-bash-6ru) ---

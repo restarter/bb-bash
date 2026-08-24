@@ -275,13 +275,9 @@ bbb pr show 2      # now reports "-> main"
 
 ---
 
-## raw / raw-post / raw-put / raw-delete
+## raw
 
-**Synopsis:**
-- `bbb raw [--text] <endpoint>` — GET request
-- `bbb raw-post <endpoint> <json>` — POST request
-- `bbb raw-put <endpoint> <json>` — PUT request
-- `bbb raw-delete <endpoint>` — DELETE request
+**Synopsis:** `bbb raw [--text] <endpoint>`
 
 **Description:** Direct API access for endpoints not wrapped. Endpoint is relative to `/repositories/{ws}/{repo}`. Output is raw JSON (pretty-printed via `jq`). Pass `--text` — before the endpoint — for endpoints that return plain text rather than JSON, such as pipeline step logs, where `jq` would fail to parse and, under `pipefail`, leave stdout empty.
 
@@ -295,40 +291,65 @@ Four separate verbs rather than one `raw --method=`: `api_delete` returns a stat
 
 ---
 
+## raw-post
+
+**Synopsis:** `bbb raw-post <endpoint> <json>`
+
+**Description:** Direct POST access for endpoints not wrapped by a higher-level command. See [`raw`](#raw) for safety guidance.
+
+---
+
+## raw-put
+
+**Synopsis:** `bbb raw-put <endpoint> <json>`
+
+**Description:** Direct PUT access for endpoints not wrapped by a higher-level command. See [`raw`](#raw) for safety guidance.
+
+---
+
+## raw-delete
+
+**Synopsis:** `bbb raw-delete <endpoint>`
+
+**Description:** Direct DELETE access for endpoints not wrapped by a higher-level command. See [`raw`](#raw) for exit behavior and safety guidance.
+
+---
+
 ## help
 
-**Synopsis:** `bbb help` (also `bbb -h`, `bbb --help`, or `bbb` with no arguments)
+**Synopsis:** `bbb help [<command>]`
 
-**Description:** Print the command list and the configuration reference for the installed version.
+**Description:** Print the command list, or current syntax for one routed command. Multi-word commands are accepted, for example `bbb help pr comments`. The global aliases `bbb -h`, `bbb --help`, and `bbb` with no arguments still print the command list.
 
 **Required scopes:** none — this command short-circuits credential and repo resolution, so it works without a `.env` and outside a Bitbucket repository.
 
-Worth knowing for AI agents: the artifacts under `docs/agents/` are **copies** dropped into a project by `install-agent`, and `bbb` may have been upgraded since. `bbb help` is the source of truth for **which commands** the installed binary accepts — `test/test_agent_artifacts.bats` asserts it lists every command the router defines.
-
-It is deliberately not a flag reference: `usage()` is a one-screen summary and some commands carry flags it does not spell out. For those, `bbb install-agent --help` prints its own full table, and this file is the complete reference.
+Worth knowing for AI agents: installed artifacts are copies and `bbb` may have been upgraded since. `bbb help <command>` is the authoritative syntax for the installed binary; this file adds explanations and examples. `test/test_agent_artifacts.bats` keeps the router, command-specific help, and documented synopses aligned.
 
 ---
 
 ## install-agent
 
-**Synopsis:**
-- `bbb install-agent [--rule] [--skill] [--claude] [--agents] [--global] [--dry-run] [--force]`
+**Synopsis:** `bbb install-agent [--claude-code|--codex|--rule|--skill|--claude|--agents] [--global] [--dry-run] [--force]`
 
-**Description:** Drop AI-agent integration artifacts into the current project (default) or into user-global Claude Code config (`--global`). Combine any subset of `--rule`, `--skill`, `--claude`, `--agents`. Without flags, prompts interactively for letter codes (`rsca`). Unlike `pr` and `raw`, this command does NOT require `.env` credentials or a Bitbucket-repo CWD — it runs from any directory.
+**Description:** Install a compact always-on instruction and a lazy `bb-bash` skill into project scope (default) or user scope (`--global`). `--claude-code` and `--codex` are the recommended native presets. The older granular selectors remain supported and combinable. Unlike `pr` and `raw`, this command does not require credentials or a Bitbucket-repo CWD.
 
 **Flags:**
 
 | Flag | Project destination | Global destination (`--global`) | Behavior |
 |------|---------------------|---------------------------------|----------|
+| `--claude-code` | Claude rule + skill paths below | Claude rule + skill paths below | Recommended Claude Code pair |
+| `--codex` | `./AGENTS.md` + `./.agents/skills/bb-bash/SKILL.md` | effective Codex AGENTS file + `$HOME/.agents/skills/bb-bash/SKILL.md` | Recommended Codex pair |
 | `--rule` | `./.claude/rules/bb-bash-rule.md` | `~/.claude/rules/bb-bash-rule.md` | Claude Code rule, auto-loaded |
 | `--skill` | `./.claude/skills/bb-bash/SKILL.md` | `~/.claude/skills/bb-bash/SKILL.md` | Claude Code skill, lazy-loaded |
-| `--claude` | `./CLAUDE.md` | `~/.claude/CLAUDE.md` | Append `## Bitbucket via bb-bash` section (create file if missing) |
-| `--agents` | `./AGENTS.md` | *not supported — error* | Cross-tool standard; no widely-adopted user-global path |
-| `--global` | — | — | Install into user-global Claude Code config (`$HOME/.claude/`) for cross-project availability. Requires explicit `--rule`/`--skill`/`--claude` (no interactive). Incompatible with `--agents`. |
+| `--claude` | `./CLAUDE.md` | `~/.claude/CLAUDE.md` | Manage a compact marked section |
+| `--agents` | `./AGENTS.md` | effective Codex AGENTS file | Manage a compact marked section |
+| `--global` | — | — | Use user scope; requires an explicit preset or selector |
 | `--dry-run` | — | — | Print actions, write nothing to disk |
-| `--force` | — | — | Overwrite existing files / re-append section even if marker is present |
+| `--force` | — | — | Refresh artifacts; migrate a legacy trailing unmarked section |
 
-**Idempotency:** by default skips any artifact that already exists. For `CLAUDE.md` / `AGENTS.md` the check is marker-based (`## Bitbucket via bb-bash`) — file may exist for other reasons without skipping. Re-running is safe.
+**Codex global precedence:** the instruction goes to `${CODEX_HOME:-$HOME/.codex}/AGENTS.override.md` when that file exists and is non-empty; otherwise it goes to `${CODEX_HOME:-$HOME/.codex}/AGENTS.md`. The effective path is printed. `CODEX_HOME` does not affect the global skill, which always goes to `$HOME/.agents/skills/bb-bash/SKILL.md`.
+
+**Idempotency:** `CLAUDE.md` and `AGENTS.md` content is enclosed by `<!-- bb-bash:start -->` / `<!-- bb-bash:end -->`. Reinstallation replaces that section in place without duplicating it and preserves unrelated content. A legacy unmarked `## Bitbucket via bb-bash` section is skipped with a migration message; `--force` replaces that heading and all trailing content with the marked canonical section.
 
 **Source:** artifacts are fetched from `https://raw.githubusercontent.com/restarter/bb-bash/${BB_BASH_REF:-main}/docs/agents/`. Pin to a release tag for reproducibility:
 
@@ -339,16 +360,15 @@ BB_BASH_REF=v0.3.1 bbb install-agent --rule --skill --claude --agents
 **Examples:**
 
 ```bash
-bbb install-agent                                # interactive (project)
-bbb install-agent --rule --skill                 # project-level Claude Code pair
-bbb install-agent --rule --global                # user-global rule (auto-loaded in every project)
-bbb install-agent --rule --skill --global        # global rule + skill
-bbb install-agent --claude --global              # append snippet to ~/.claude/CLAUDE.md
-bbb install-agent --claude --dry-run             # preview snippet append
-bbb install-agent --rule --force                 # overwrite existing rule
+bbb install-agent --claude-code                  # project Claude rule + skill
+bbb install-agent --claude-code --global         # user Claude rule + skill
+bbb install-agent --codex                        # project AGENTS section + skill
+bbb install-agent --codex --global --dry-run     # show both effective user paths
+bbb install-agent --codex --global               # install both Codex artifacts
+bbb install-agent --rule --skill --global        # backward-compatible granular form
 ```
 
-**Interactive mode:** prints status of each artifact (present/missing/no-section), then reads letter codes. `rsca` = all four; `rs` = rule+skill; `q` (or empty input) = quit. Invalid characters in the input are rejected; whitelist is `r`/`s`/`c`/`a`. Refuses to run interactively when stdin is not a TTY (`bbb install-agent < /dev/null` or CI contexts) — pass explicit flags instead. Interactive mode operates on the current project only; for global install pass explicit `--global` with at least one of `--rule`/`--skill`/`--claude`.
+**Interactive mode:** without selectors, the backward-compatible project prompt offers the four granular artifacts (`rsca`). Global installation always requires an explicit preset or selector.
 
 ---
 
@@ -363,6 +383,7 @@ bbb install-agent --rule --force                 # overwrite existing rule
 - `BB_BASH_USER_ONLY=1` — installer-only; force `~/.local/bin` (see [`../scripts/install.sh`](../scripts/install.sh))
 - `BB_BASH_FORCE=1` — installer-only; override non-symlink overwrite refusal (see [`../scripts/install.sh`](../scripts/install.sh))
 - `BB_BASH_REF=<git-ref>` — `install-agent` only; ref to fetch agent artifacts from (default `main`)
+- `CODEX_HOME=<path>` — Codex configuration root used to select the global `AGENTS.md` / `AGENTS.override.md`; it does not change the global skill path
 
 See [design.md](design.md) for the full env precedence and auto-detect chain.
 

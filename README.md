@@ -1,10 +1,10 @@
 # bb-bash (bbb)
 
-> **Bitbucket Cloud CLI built for AI coding agents** — single-file bash with zero-config repo auto-detect and inline PR review, plus `CLAUDE.md` snippet, Rule, and Skill bundled out of the box.
+> **Bitbucket Cloud CLI built for AI coding agents** — single-file bash with zero-config repo auto-detect, inline PR review, and native low-context Claude Code and Codex integrations.
 
 `bbb` (the binary) wraps the Bitbucket Cloud REST API 2.0 so you and your AI agent can drive PR review, inline comments, approve, decline, merge, and create — all from chat or terminal, without leaving your editor. `cd` into any Bitbucket-Cloud-backed repo and run `bbb pr list` — workspace/repo are auto-detected from `git remote`, no per-project setup. No build step, no package manager: one bash script, two dependencies (`curl`, `jq`).
 
-The drop-in artifacts (`CLAUDE.md` / `AGENTS.md` snippets + Claude Code **Rule** + Claude Code **Skill**) teach the AI agents you already use (Claude Code, Cursor, Copilot Chat, Codex, Aider, …) how to call `bbb` — no manual wiring. See [For AI agents](#for-ai-agents) for what each artifact does.
+The native presets install compact always-on guidance and a shared lazy skill for Claude Code or Codex. Backward-compatible `CLAUDE.md` / `AGENTS.md` and granular artifact options remain available. See [For AI agents](#for-ai-agents).
 
 ## Install
 
@@ -41,14 +41,16 @@ Workspace/repo are [auto-detected](#how-auto-detect-works) from `git remote`. Ov
 
 ## For AI agents
 
-Run `bbb install-agent` inside your project — or with `--global` for every project at once — to drop integration artifacts so the AI agents you already use (Claude Code, Cursor, Copilot Chat, Codex, Aider, …) know how to call `bbb` without extra prompting.
+Install a tiny always-on instruction plus a detailed, lazy-loaded skill. The instruction only tells the agent when to use `bbb` and when to activate the skill; review and write workflows stay out of session context until Bitbucket work is requested.
 
 ### Flags
 
 | Flag | Purpose |
 |---|---|
-| `--rule` / `--skill` / `--claude` / `--agents` | Pick the artifact(s) to install — see the table below |
-| `--global` | Install into `~/.claude/` instead of the current project; Claude Code auto-loads from there in every project. Works with `--rule` / `--skill` / `--claude`. `--agents` is project-only — no widely-adopted global path for `AGENTS.md`. |
+| `--claude-code` | Recommended Claude Code preset: compact rule + lazy skill |
+| `--codex` | Recommended Codex preset: managed `AGENTS.md` section + lazy skill |
+| `--rule` / `--skill` / `--claude` / `--agents` | Backward-compatible granular selectors |
+| `--global` | Install the selected integration in user scope instead of project scope |
 | `--dry-run` | Preview the writes without touching disk |
 | `--force` | Overwrite an existing artifact (default is skip-if-exists) |
 
@@ -57,23 +59,26 @@ Pin to a release tag for reproducibility: `BB_BASH_REF=v0.3.1 bbb install-agent 
 ### Examples
 
 ```bash
-bbb install-agent --claude                 # snippet → ./CLAUDE.md (any CLAUDE.md-reading agent)
-bbb install-agent --rule --skill           # Claude Code: rule (always-on) + skill (on-demand)
-bbb install-agent --rule --global          # global rule — auto-loaded in every project
-bbb install-agent --rule --skill --global  # global rule + skill (Claude Code combo)
-bbb install-agent --claude --dry-run       # preview without writing
+bbb install-agent --claude-code             # project Claude rule + skill
+bbb install-agent --claude-code --global    # user Claude rule + skill
+bbb install-agent --codex                   # project AGENTS section + skill
+bbb install-agent --codex --global          # user Codex AGENTS section + skill
+bbb install-agent --codex --global --dry-run
 ```
 
 ### What ships out of the box
 
-**Pick any one** — each artifact is fully self-contained. Your AI agent gets the same end result (install hint, auth, commands, conventions, workflows). Choose by your tool / preference; combine if you want.
+The always-on files are deliberately compact (at most 2 KiB). The shared [`SKILL.md`](docs/agents/bb-bash-skill/SKILL.md) is the canonical source for non-trivial workflows and is installed into each tool's native skill directory.
 
 | Type | Project install | Global (`--global`) | Loading | Best for |
 |---|---|---|---|---|
 | `CLAUDE.md` | `./CLAUDE.md` | `~/.claude/CLAUDE.md` | every turn | Claude / Cursor / Copilot via `CLAUDE.md` |
-| `AGENTS.md` | `./AGENTS.md` | — *(project-only)* | every turn | cross-tool agents (OpenAI Codex, Aider, Continue, …) |
+| Codex `AGENTS.md` section | `./AGENTS.md` | `${CODEX_HOME:-$HOME/.codex}/AGENTS.md`* | every turn | compact activation and safety guidance |
 | Rule | `./.claude/rules/bb-bash-rule.md` | `~/.claude/rules/bb-bash-rule.md` | session start | short always-on hint, "bbb exists, here's how" |
-| Skill | `./.claude/skills/bb-bash/SKILL.md` | `~/.claude/skills/bb-bash/SKILL.md` | on-demand | full workflows (review, respond, batch cleanup); zero context cost until invoked |
+| Claude skill | `./.claude/skills/bb-bash/SKILL.md` | `~/.claude/skills/bb-bash/SKILL.md` | on-demand | full workflows |
+| Codex skill | `./.agents/skills/bb-bash/SKILL.md` | `$HOME/.agents/skills/bb-bash/SKILL.md` | on-demand | full workflows; explicitly invoke with `$bb-bash` |
+
+\* If the Codex root contains a non-empty `AGENTS.override.md`, the global managed section goes there instead. `CODEX_HOME` affects the instruction location; the global skill always stays under `$HOME/.agents/skills/`.
 
 Browse the artifact sources directly: [`docs/agents/`](docs/agents/) ([README](docs/agents/README.md)).
 
@@ -84,7 +89,7 @@ Browse the artifact sources directly: [`docs/agents/`](docs/agents/) ([README](d
 - "Approve PR #12 and merge with `--squash --delete-branch`."
 - "Reply to comment 753926626 on PR #42 with: 'Good catch, fixed.'"
 
-The agent already knows the commands because the install dropped a Rule + Skill into `.claude/`, plus a `## Bitbucket via bb-bash` section into your `CLAUDE.md` / `AGENTS.md`.
+Mentioning Bitbucket work should activate the lazy skill implicitly. In Codex, `$bb-bash` activates it explicitly. Run `bbb help <command>` for authoritative syntax.
 
 ## Commands
 

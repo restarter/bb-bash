@@ -1,43 +1,44 @@
-# AI agent integration artifacts
+# AI agent integrations
 
-Four drop-in artifacts that teach your AI coding agent how to drive `bbb` (the bb-bash binary). **Pick any one — each is fully self-contained.** Your agent gets the same end result: install hint, auth, commands, conventions, workflows.
+bb-bash uses a low-context two-layer design:
 
-| Artifact | Lands at | Loading | Best for |
-|---|---|---|---|
-| [`bb-bash-snippet.md`](bb-bash-snippet.md) | `CLAUDE.md` or `AGENTS.md` in project root | every turn | Claude / Cursor / Copilot via `CLAUDE.md`; OpenAI Codex / Aider / Continue via `AGENTS.md` |
-| [`bb-bash-rule.md`](bb-bash-rule.md) | `.claude/rules/bb-bash-rule.md` | session start | Claude Code, short always-on hint |
-| [`bb-bash-skill/SKILL.md`](bb-bash-skill/SKILL.md) | `.claude/skills/bb-bash/SKILL.md` | on-demand | Claude Code, full workflows (review / respond / cleanup); zero context cost until invoked |
+- The compact rule or managed instruction is always loaded. It identifies `bbb`, activates the skill for non-trivial Bitbucket work, and states the essential trust and authorization boundaries.
+- [`bb-bash-skill/SKILL.md`](bb-bash-skill/SKILL.md) is the canonical detailed workflow source. Claude Code and Codex load it only when Bitbucket work is requested. Codex users can also invoke it explicitly with `$bb-bash`.
 
-Re-running with no flags makes `bbb install-agent` prompt interactively. Combine flags freely:
+Use `bbb help <command>` for current command syntax. [`docs/commands.md`](../commands.md) is the full reference; the skill intentionally does not duplicate it.
 
-```bash
-bbb install-agent                                # interactive (project)
-bbb install-agent --claude                       # append snippet to CLAUDE.md
-bbb install-agent --agents                       # append snippet to AGENTS.md
-bbb install-agent --rule                         # drop the Claude Code rule
-bbb install-agent --skill                        # drop the Claude Code skill
-bbb install-agent --rule --skill                 # Claude Code-native pair (project)
-bbb install-agent --rule --dry-run               # preview without writing
-bbb install-agent --rule --force                 # overwrite existing
-```
-
-### Install globally (every project)
-
-Pass `--global` to write into `$HOME/.claude/` instead of the current project. Claude Code auto-loads from there for all projects:
+## Recommended presets
 
 ```bash
-bbb install-agent --rule --global                # → ~/.claude/rules/bb-bash-rule.md
-bbb install-agent --skill --global               # → ~/.claude/skills/bb-bash/SKILL.md
-bbb install-agent --claude --global              # → ~/.claude/CLAUDE.md (append snippet)
-bbb install-agent --rule --skill --global        # both, globally
+bbb install-agent --claude-code [--global]
+bbb install-agent --codex [--global]
 ```
 
-`--agents --global` is intentionally an error — `AGENTS.md` has no widely-adopted global path; install it per-project instead.
+| Integration | Project scope | User scope |
+|---|---|---|
+| Claude compact rule | `.claude/rules/bb-bash-rule.md` | `$HOME/.claude/rules/bb-bash-rule.md` |
+| Claude lazy skill | `.claude/skills/bb-bash/SKILL.md` | `$HOME/.claude/skills/bb-bash/SKILL.md` |
+| Codex compact instruction | managed section in `AGENTS.md` | managed section in the effective global Codex AGENTS file |
+| Codex lazy skill | `.agents/skills/bb-bash/SKILL.md` | `$HOME/.agents/skills/bb-bash/SKILL.md` |
 
-### Pin to a release tag
+For global Codex installation, the effective instruction destination is:
 
-```bash
-BB_BASH_REF=v0.3.1 bbb install-agent --rule --skill
+1. `${CODEX_HOME:-$HOME/.codex}/AGENTS.override.md` when it exists and is non-empty.
+2. Otherwise `${CODEX_HOME:-$HOME/.codex}/AGENTS.md`.
+
+The installer prints the effective destination. `CODEX_HOME` never changes the global skill path: Codex discovers it at `$HOME/.agents/skills/bb-bash/SKILL.md`.
+
+## Managed files and compatibility
+
+Sections added to `AGENTS.md` or `CLAUDE.md` use these markers:
+
+```markdown
+<!-- bb-bash:start -->
+<!-- bb-bash:end -->
 ```
 
-See [README → For AI agents](../../README.md#for-ai-agents) for the high-level overview, or [commands.md → install-agent](../commands.md#install-agent) for the full flag reference.
+Reinstallation updates that section in place and preserves unrelated content. A legacy unmarked bb-bash section is skipped with a migration message; `--force` migrates it when it is the trailing section. `--dry-run` reports every effective destination without writing.
+
+The granular `--rule`, `--skill`, `--claude`, and `--agents` selectors remain supported and may be combined. Without selectors, project installation keeps the legacy interactive prompt.
+
+See [README → For AI agents](../../README.md#for-ai-agents) for the overview and [commands.md → install-agent](../commands.md#install-agent) for all flags.
