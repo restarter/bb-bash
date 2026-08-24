@@ -35,6 +35,7 @@ _run_bbb() {
     contains "$output" "*--agents*"
     contains "$output" "*--claude-code*"
     contains "$output" "*--codex*"
+    contains "$output" "*--codex-skill*"
     contains "$output" "*BB_BASH_REF*"
 }
 
@@ -177,7 +178,7 @@ combined content"
     _run_bbb install-agent --rule --skill --claude --agents
     [ "$status" -eq 0 ]
     [ -f "$TEST_TMP/.claude/rules/bb-bash-rule.md" ]
-    [ -f "$TEST_TMP/.claude/skills/bb-bash/SKILL.md" ]
+    [ -f "$TEST_TMP/.claude/skills/bbb/SKILL.md" ]
     [ -f "$TEST_TMP/CLAUDE.md" ]
     [ -f "$TEST_TMP/AGENTS.md" ]
     grep -q "combined content" "$TEST_TMP/CLAUDE.md"
@@ -213,13 +214,13 @@ combined content"
     [ ! -e "$TEST_TMP/.claude/rules/bb-bash-rule.md" ]
 }
 
-@test "install-agent: --skill --global writes to \$HOME/.claude/skills/bb-bash/" {
+@test "install-agent: --skill --global writes to \$HOME/.claude/skills/bbb/" {
     stub_curl_download "skill body" 200
     HOME="$TEST_TMP/h" _run_bbb install-agent --skill --global
     [ "$status" -eq 0 ]
-    [ -f "$TEST_TMP/h/.claude/skills/bb-bash/SKILL.md" ]
-    grep -q "skill body" "$TEST_TMP/h/.claude/skills/bb-bash/SKILL.md"
-    [ ! -e "$TEST_TMP/.claude/skills/bb-bash/SKILL.md" ]
+    [ -f "$TEST_TMP/h/.claude/skills/bbb/SKILL.md" ]
+    grep -q "skill body" "$TEST_TMP/h/.claude/skills/bbb/SKILL.md"
+    [ ! -e "$TEST_TMP/.claude/skills/bbb/SKILL.md" ]
 }
 
 @test "install-agent: --claude --global appends to \$HOME/.claude/CLAUDE.md" {
@@ -240,7 +241,7 @@ snippet body" 200
     _run_bbb install-agent --claude-code
     [ "$status" -eq 0 ]
     [ -f "$TEST_TMP/.claude/rules/bb-bash-rule.md" ]
-    [ -f "$TEST_TMP/.claude/skills/bb-bash/SKILL.md" ]
+    [ -f "$TEST_TMP/.claude/skills/bbb/SKILL.md" ]
 }
 
 @test "install-agent: --claude-code --global installs user rule and lazy skill" {
@@ -248,7 +249,7 @@ snippet body" 200
     HOME="$TEST_TMP/home with spaces" _run_bbb install-agent --claude-code --global
     [ "$status" -eq 0 ]
     [ -f "$TEST_TMP/home with spaces/.claude/rules/bb-bash-rule.md" ]
-    [ -f "$TEST_TMP/home with spaces/.claude/skills/bb-bash/SKILL.md" ]
+    [ -f "$TEST_TMP/home with spaces/.claude/skills/bbb/SKILL.md" ]
 }
 
 @test "install-agent: --codex installs project AGENTS section and lazy skill" {
@@ -257,8 +258,36 @@ canonical artifact"
     _run_bbb install-agent --codex
     [ "$status" -eq 0 ]
     [ -f "$TEST_TMP/AGENTS.md" ]
-    [ -f "$TEST_TMP/.agents/skills/bb-bash/SKILL.md" ]
+    [ -f "$TEST_TMP/.agents/skills/bbb/SKILL.md" ]
     [ "$(grep -c '<!-- bb-bash:start -->' "$TEST_TMP/AGENTS.md")" = "1" ]
+}
+
+@test "install-agent: --codex-skill installs only the project bbb skill" {
+    stub_curl_download "canonical artifact"
+    _run_bbb install-agent --codex-skill
+    [ "$status" -eq 0 ]
+    [ -f "$TEST_TMP/.agents/skills/bbb/SKILL.md" ]
+    [ ! -e "$TEST_TMP/AGENTS.md" ]
+}
+
+@test "install-agent: --codex-skill --global installs only the HOME bbb skill" {
+    stub_curl_download "canonical artifact"
+    HOME="$TEST_TMP/home" CODEX_HOME="$TEST_TMP/codex" \
+        _run_bbb install-agent --codex-skill --global
+    [ "$status" -eq 0 ]
+    [ -f "$TEST_TMP/home/.agents/skills/bbb/SKILL.md" ]
+    [ ! -e "$TEST_TMP/codex" ]
+}
+
+@test "install-agent: legacy skill path is reported and never deleted" {
+    mkdir -p "$TEST_TMP/.agents/skills/bb-bash"
+    printf 'legacy skill\n' > "$TEST_TMP/.agents/skills/bb-bash/SKILL.md"
+    stub_curl_download "bbb skill"
+    _run_bbb install-agent --codex-skill
+    [ "$status" -eq 0 ]
+    contains "$output" "*migration*legacy skill remains*"
+    grep -q '^legacy skill$' "$TEST_TMP/.agents/skills/bb-bash/SKILL.md"
+    grep -q '^bbb skill$' "$TEST_TMP/.agents/skills/bbb/SKILL.md"
 }
 
 @test "install-agent: --codex --global installs effective AGENTS and HOME skill" {
@@ -266,9 +295,9 @@ canonical artifact"
     HOME="$TEST_TMP/home" _run_bbb install-agent --codex --global
     [ "$status" -eq 0 ]
     [ -f "$TEST_TMP/home/.codex/AGENTS.md" ]
-    [ -f "$TEST_TMP/home/.agents/skills/bb-bash/SKILL.md" ]
+    [ -f "$TEST_TMP/home/.agents/skills/bbb/SKILL.md" ]
     contains "$output" "*$TEST_TMP/home/.codex/AGENTS.md*"
-    contains "$output" "*$TEST_TMP/home/.agents/skills/bb-bash/SKILL.md*"
+    contains "$output" "*$TEST_TMP/home/.agents/skills/bbb/SKILL.md*"
 }
 
 @test "install-agent: custom CODEX_HOME changes global instruction but not skill" {
@@ -277,8 +306,8 @@ canonical artifact"
         _run_bbb install-agent --codex --global
     [ "$status" -eq 0 ]
     [ -f "$TEST_TMP/custom codex/AGENTS.md" ]
-    [ -f "$TEST_TMP/home/.agents/skills/bb-bash/SKILL.md" ]
-    [ ! -e "$TEST_TMP/custom codex/skills/bb-bash/SKILL.md" ]
+    [ -f "$TEST_TMP/home/.agents/skills/bbb/SKILL.md" ]
+    [ ! -e "$TEST_TMP/custom codex/skills/bbb/SKILL.md" ]
 }
 
 @test "install-agent: non-empty AGENTS.override.md takes global precedence" {
@@ -356,7 +385,7 @@ canonical artifact"
         _run_bbb install-agent --codex --global --dry-run
     [ "$status" -eq 0 ]
     contains "$output" "*$TEST_TMP/codex/AGENTS.md*"
-    contains "$output" "*$TEST_TMP/home/.agents/skills/bb-bash/SKILL.md*"
+    contains "$output" "*$TEST_TMP/home/.agents/skills/bbb/SKILL.md*"
     [ ! -e "$TEST_TMP/codex" ]
     [ ! -e "$TEST_TMP/home" ]
     [ ! -f "$STUB_DIR/.calls" ] || [ ! -s "$STUB_DIR/.calls" ]
@@ -369,7 +398,7 @@ canonical artifact"
     _run_bbb install-agent --codex
     [ "$status" -eq 0 ]
     [ -f "$TEST_TMP/project with spaces/AGENTS.md" ]
-    [ -f "$TEST_TMP/project with spaces/.agents/skills/bb-bash/SKILL.md" ]
+    [ -f "$TEST_TMP/project with spaces/.agents/skills/bbb/SKILL.md" ]
 }
 
 @test "install-agent: installed Codex skill exactly matches canonical repository artifact" {
@@ -381,7 +410,7 @@ canonical artifact"
     _run_bbb install-agent --codex
     [ "$status" -eq 0 ]
     cmp "$repo_root/docs/agents/bb-bash-skill/SKILL.md" \
-        "$TEST_TMP/.agents/skills/bb-bash/SKILL.md"
+        "$TEST_TMP/.agents/skills/bbb/SKILL.md"
 }
 
 # --- URL→file mapping regression (bb-bash-6ru) ---

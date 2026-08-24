@@ -38,7 +38,7 @@
 #   bbb raw-put <endpoint> <json>              - Raw API call (PUT)
 #   bbb raw-delete <endpoint>                  - Raw API call (DELETE; exits non-zero on failure)
 #   bbb install-agent [--claude-code|--codex] [--global]
-#                                                 - Install native compact instruction + lazy skill
+#                                                 - Install native self-contained instruction + lazy skill
 #   bbb help [<command>]  (also -h, --help)    - Show usage; no .env or Bitbucket repo needed
 
 set -euo pipefail
@@ -480,7 +480,7 @@ _install_agent_md_section() {
     local url="https://raw.githubusercontent.com/restarter/bb-bash/${ref}/docs/agents/bb-bash-snippet.md"
     local start_marker='<!-- bb-bash:start -->'
     local end_marker='<!-- bb-bash:end -->'
-    local legacy_re='^## Bitbucket( Cloud)? via bb-bash$'
+    local legacy_re='^(## Bitbucket( Cloud)? via bb-bash|# bbb — Bitbucket Cloud workflows)$'
     local start_count=0 end_count=0
     local legacy_present=false legacy_trailing=false
 
@@ -596,6 +596,14 @@ _install_agent_codex_global_agents_dest() {
         printf '%s\n' "$codex_root/AGENTS.override.md"
     else
         printf '%s\n' "$codex_root/AGENTS.md"
+    fi
+}
+
+_install_agent_legacy_skill_notice() {
+    local legacy_dest="$1" new_dest="$2"
+    if [[ -e "$legacy_dest" && "$legacy_dest" != "$new_dest" ]]; then
+        echo "  migration: legacy skill remains at $legacy_dest"
+        echo "             bbb skill destination is $new_dest; remove the legacy directory manually after verification"
     fi
 }
 
@@ -1428,6 +1436,7 @@ cmd_install_agent() {
         case "$1" in
             --claude-code) want_rule=true; want_claude_skill=true; has_flag=true ;;
             --codex) want_agents=true; want_codex_skill=true; has_flag=true ;;
+            --codex-skill) want_codex_skill=true; has_flag=true ;;
             --rule) want_rule=true; has_flag=true ;;
             --skill) want_claude_skill=true; has_flag=true ;;
             --claude) want_claude=true; has_flag=true ;;
@@ -1437,31 +1446,34 @@ cmd_install_agent() {
             --force)    INSTALL_AGENT_FORCE=true ;;
             -h|--help)
                 cat <<'EOF'
-Usage: bbb install-agent [--claude-code|--codex|--rule|--skill|--claude|--agents] [--global] [--dry-run] [--force]
+Usage: bbb install-agent [--claude-code|--codex|--codex-skill|--rule|--skill|--claude|--agents] [--global] [--dry-run] [--force]
 
-Install compact always-on instructions and lazy bb-bash skills into the current
-project (default) or user scope (--global). Selectors may be combined.
+Install independently usable always-on instructions and lazy bbb skills into
+the current project (default) or user scope (--global). Selectors may combine.
 
 Recommended presets:
-  --claude-code  compact Claude rule plus lazy skill
+  --claude-code  self-contained Claude rule plus lazy skill
                   project: .claude/rules/bb-bash-rule.md
-                           .claude/skills/bb-bash/SKILL.md
+                           .claude/skills/bbb/SKILL.md
                   global:  $HOME/.claude/rules/bb-bash-rule.md
-                           $HOME/.claude/skills/bb-bash/SKILL.md
+                           $HOME/.claude/skills/bbb/SKILL.md
   --codex        managed AGENTS section plus lazy skill
                   project: ./AGENTS.md
-                           ./.agents/skills/bb-bash/SKILL.md
+                           ./.agents/skills/bbb/SKILL.md
                   global:  ${CODEX_HOME:-$HOME/.codex}/AGENTS.override.md when
                            that file exists and is non-empty; otherwise AGENTS.md
-                           skill: $HOME/.agents/skills/bb-bash/SKILL.md
+                           skill: $HOME/.agents/skills/bbb/SKILL.md
+  --codex-skill  lazy bbb skill only (no AGENTS.md change)
+                  project: ./.agents/skills/bbb/SKILL.md
+                  global:  $HOME/.agents/skills/bbb/SKILL.md
 
 Legacy granular selectors (retained):
   --rule       drop the Claude Code rule
                   project: ./.claude/rules/bb-bash-rule.md
                   global:  ~/.claude/rules/bb-bash-rule.md
   --skill      drop the Claude Code skill
-                  project: ./.claude/skills/bb-bash/SKILL.md
-                  global:  ~/.claude/skills/bb-bash/SKILL.md
+                  project: ./.claude/skills/bbb/SKILL.md
+                  global:  ~/.claude/skills/bbb/SKILL.md
   --claude     manage the bb-bash section in CLAUDE.md
                   project: ./CLAUDE.md
                   global:  ~/.claude/CLAUDE.md
@@ -1482,12 +1494,13 @@ Env:
   BB_BASH_REF   Git ref to fetch artifacts from (default: main).
                Pin to a release tag for reproducibility, e.g. BB_BASH_REF=v0.3.1.
   CODEX_HOME    Codex config root for the global AGENTS file only.
-               The global Codex skill always uses $HOME/.agents/skills/.
+               The global Codex skill always uses $HOME/.agents/skills/bbb/.
 
 Examples:
   bbb install-agent --claude-code                    # project Claude integration
   bbb install-agent --codex --global --dry-run       # preview both Codex paths
   bbb install-agent --codex --global                 # user Codex integration
+  bbb install-agent --codex-skill --global           # user Codex skill only
   bbb install-agent --rule --skill --global          # legacy granular form
   BB_BASH_REF=v0.3.1 bbb install-agent --rule       # pin to a release tag
 EOF
@@ -1510,7 +1523,7 @@ EOF
         echo "Project: $PWD"
         echo "Status:"
         _agent_status_line ".claude/rules/bb-bash-rule.md"
-        _agent_status_line ".claude/skills/bb-bash/SKILL.md"
+        _agent_status_line ".claude/skills/bbb/SKILL.md"
         _agent_status_line_marked "CLAUDE.md" '<!-- bb-bash:start -->'
         _agent_status_line_marked "AGENTS.md" '<!-- bb-bash:start -->'
         echo ""
@@ -1531,19 +1544,24 @@ EOF
     fi
 
     local rule_dest claude_skill_dest claudemd_dest agentsmd_dest codex_skill_dest base_label
+    local legacy_claude_skill_dest legacy_codex_skill_dest
     if [[ "$INSTALL_AGENT_GLOBAL" == "true" ]]; then
         rule_dest="$HOME/.claude/rules/bb-bash-rule.md"
-        claude_skill_dest="$HOME/.claude/skills/bb-bash/SKILL.md"
+        claude_skill_dest="$HOME/.claude/skills/bbb/SKILL.md"
+        legacy_claude_skill_dest="$HOME/.claude/skills/bb-bash/SKILL.md"
         claudemd_dest="$HOME/.claude/CLAUDE.md"
         agentsmd_dest=$(_install_agent_codex_global_agents_dest)
-        codex_skill_dest="$HOME/.agents/skills/bb-bash/SKILL.md"
+        codex_skill_dest="$HOME/.agents/skills/bbb/SKILL.md"
+        legacy_codex_skill_dest="$HOME/.agents/skills/bb-bash/SKILL.md"
         base_label="user scope"
     else
         rule_dest=".claude/rules/bb-bash-rule.md"
-        claude_skill_dest=".claude/skills/bb-bash/SKILL.md"
+        claude_skill_dest=".claude/skills/bbb/SKILL.md"
+        legacy_claude_skill_dest=".claude/skills/bb-bash/SKILL.md"
         claudemd_dest="CLAUDE.md"
         agentsmd_dest="AGENTS.md"
-        codex_skill_dest=".agents/skills/bb-bash/SKILL.md"
+        codex_skill_dest=".agents/skills/bbb/SKILL.md"
+        legacy_codex_skill_dest=".agents/skills/bb-bash/SKILL.md"
         base_label="$PWD"
     fi
 
@@ -1556,10 +1574,16 @@ EOF
     echo "Installing into $base_label ($mode_label, ref=${BB_BASH_REF:-main})"
 
     $want_rule          && _install_agent_fetch "bb-bash-rule.md"        "$rule_dest"
-    $want_claude_skill && _install_agent_fetch "bb-bash-skill/SKILL.md" "$claude_skill_dest"
+    if $want_claude_skill; then
+        _install_agent_legacy_skill_notice "$legacy_claude_skill_dest" "$claude_skill_dest"
+        _install_agent_fetch "bb-bash-skill/SKILL.md" "$claude_skill_dest"
+    fi
     $want_claude        && _install_agent_md_section "$claudemd_dest"
     $want_agents        && _install_agent_md_section "$agentsmd_dest"
-    $want_codex_skill   && _install_agent_fetch "bb-bash-skill/SKILL.md" "$codex_skill_dest"
+    if $want_codex_skill; then
+        _install_agent_legacy_skill_notice "$legacy_codex_skill_dest" "$codex_skill_dest"
+        _install_agent_fetch "bb-bash-skill/SKILL.md" "$codex_skill_dest"
+    fi
 
     echo "Done."
 }
@@ -1630,7 +1654,7 @@ usage() {
     echo "  bbb raw-post <endpoint> <json>               Raw POST"
     echo "  bbb raw-put <endpoint> <json>                Raw PUT"
     echo "  bbb raw-delete <endpoint>                    Raw DELETE (exits non-zero on failure)"
-    echo "  bbb install-agent [--claude-code|--codex] [--global] [--dry-run] [--force]"
+    echo "  bbb install-agent [--claude-code|--codex|--codex-skill] [--global] [--dry-run] [--force]"
     echo "                                                  Install native agent instruction + lazy skill"
     echo "  bbb help [<command>]                         Show help (no .env or Bitbucket repo needed)"
     echo ""

@@ -2,10 +2,11 @@
 
 load test_helper
 
-compact_artifacts() {
+agent_artifacts() {
     printf '%s\n' \
         'docs/agents/bb-bash-rule.md' \
-        'docs/agents/bb-bash-snippet.md'
+        'docs/agents/bb-bash-snippet.md' \
+        'docs/agents/bb-bash-skill/SKILL.md'
 }
 
 artifact_exempt() {
@@ -27,43 +28,59 @@ artifact_exempt() {
     contains "$(bbb_command_surface)" '*install-agent*'
 }
 
-@test "always-loaded artifacts are at most 2 KiB each" {
-    local rel bytes failed=0
-    while IFS= read -r rel; do
-        bytes=$(wc -c < "$BB_BASH_ROOT/$rel" | tr -d ' ')
-        if [ "$bytes" -gt 2048 ]; then
-            echo "$rel is $bytes bytes; maximum is 2048" >&2
-            failed=1
-        fi
-    done < <(compact_artifacts)
-    [ "$failed" -eq 0 ]
-}
-
-@test "compact artifacts carry activation, freshness, trust, and write-safety guidance" {
+@test "every agent artifact is independently usable for complete safe PR workflows" {
     local rel failed=0 term
     while IFS= read -r rel; do
-        for term in 'bbb' 'bb-bash' 'bbb help' 'untrusted' 'authorization' 'request-changes' 'decline'; do
+        for term in \
+            'bbb help' 'pr show' 'pr diff' 'pr comments' 'pagination' 'newest-first' \
+            'pr checks' 'pipeline' '--old' 'request-changes' 'decline' 'authorization' \
+            'read the remote state back' '--destination' 'raw' 'untrusted'; do
             grep -qiF -- "$term" "$BB_BASH_ROOT/$rel" || {
-                echo "$rel misses required compact topic: $term" >&2
+                echo "$rel misses required standalone workflow topic: $term" >&2
                 failed=1
             }
         done
-    done < <(compact_artifacts)
+        grep -q '^EOF$' "$BB_BASH_ROOT/$rel" || {
+            echo "$rel does not keep the heredoc terminator at column 1" >&2
+            failed=1
+        }
+        if grep -Eq '^[[:space:]]+EOF$' "$BB_BASH_ROOT/$rel"; then
+            echo "$rel contains an indented heredoc terminator" >&2
+            failed=1
+        fi
+        awk '
+            $0 == "**Findings:**" { heading = NR }
+            $0 == "- First issue." && NR == heading + 2 { separated = 1 }
+            END { exit separated ? 0 : 1 }
+        ' "$BB_BASH_ROOT/$rel" || {
+            echo "$rel example has no blank line before its Markdown list" >&2
+            failed=1
+        }
+    done < <(agent_artifacts)
     [ "$failed" -eq 0 ]
 }
 
-@test "lazy skill carries the canonical non-trivial workflow topics" {
-    local skill="$BB_BASH_ROOT/docs/agents/bb-bash-skill/SKILL.md" term failed=0
-    for term in \
-        'bbb help' 'docs/commands.md' 'pr show' 'pr diff' 'pr comments' \
-        'pagination' 'pr checks' '--old' "<<'EOF'" 'request-changes' \
-        'decline' 'authorization' 'readback' 'pipeline' '--destination' 'raw'; do
-        grep -qiF -- "$term" "$skill" || {
-            echo "skill misses required workflow topic: $term" >&2
-            failed=1
-        }
-    done
+@test "every agent artifact carries the comment-writing contract" {
+    local rel failed=0 term
+    while IFS= read -r rel; do
+        for term in \
+            "<<'EOF'" 'column 1' 'do not indent' 'Python-Markdown' 'blank line' \
+            'Do not use HTML' 'publish immediately' 'pr edit-comment' 'complete body'; do
+            grep -qiF -- "$term" "$BB_BASH_ROOT/$rel" || {
+                echo "$rel misses required comment-writing topic: $term" >&2
+                failed=1
+            }
+        done
+    done < <(agent_artifacts)
     [ "$failed" -eq 0 ]
+}
+
+@test "lazy skill exposes the public bbb name and invocation hints" {
+    local skill="$BB_BASH_ROOT/docs/agents/bb-bash-skill/SKILL.md"
+    grep -q '^name: bbb$' "$skill"
+    grep -qF '/bbb' "$skill"
+    grep -qF '$bbb' "$skill"
+    grep -qF 'docs/commands.md' "$skill"
 }
 
 @test "every routed command has command-specific help without credentials" {

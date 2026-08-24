@@ -329,27 +329,30 @@ Worth knowing for AI agents: installed artifacts are copies and `bbb` may have b
 
 ## install-agent
 
-**Synopsis:** `bbb install-agent [--claude-code|--codex|--rule|--skill|--claude|--agents] [--global] [--dry-run] [--force]`
+**Synopsis:** `bbb install-agent [--claude-code|--codex|--codex-skill|--rule|--skill|--claude|--agents] [--global] [--dry-run] [--force]`
 
-**Description:** Install a compact always-on instruction and a lazy `bb-bash` skill into project scope (default) or user scope (`--global`). `--claude-code` and `--codex` are the recommended native presets. The older granular selectors remain supported and combinable. Unlike `pr` and `raw`, this command does not require credentials or a Bitbucket-repo CWD.
+**Description:** Install independently usable always-on instructions and lazy `bbb` skills into project scope (default) or user scope (`--global`). Presets install both styles for convenience; granular selectors support instruction-only or skill-only use. Unlike `pr` and `raw`, this command does not require credentials or a Bitbucket-repo CWD.
 
 **Flags:**
 
 | Flag | Project destination | Global destination (`--global`) | Behavior |
 |------|---------------------|---------------------------------|----------|
 | `--claude-code` | Claude rule + skill paths below | Claude rule + skill paths below | Recommended Claude Code pair |
-| `--codex` | `./AGENTS.md` + `./.agents/skills/bb-bash/SKILL.md` | effective Codex AGENTS file + `$HOME/.agents/skills/bb-bash/SKILL.md` | Recommended Codex pair |
+| `--codex` | `./AGENTS.md` + `./.agents/skills/bbb/SKILL.md` | effective Codex AGENTS file + `$HOME/.agents/skills/bbb/SKILL.md` | Codex instruction + skill pair |
+| `--codex-skill` | `./.agents/skills/bbb/SKILL.md` | `$HOME/.agents/skills/bbb/SKILL.md` | Codex skill only; no AGENTS change |
 | `--rule` | `./.claude/rules/bb-bash-rule.md` | `~/.claude/rules/bb-bash-rule.md` | Claude Code rule, auto-loaded |
-| `--skill` | `./.claude/skills/bb-bash/SKILL.md` | `~/.claude/skills/bb-bash/SKILL.md` | Claude Code skill, lazy-loaded |
-| `--claude` | `./CLAUDE.md` | `~/.claude/CLAUDE.md` | Manage a compact marked section |
-| `--agents` | `./AGENTS.md` | effective Codex AGENTS file | Manage a compact marked section |
+| `--skill` | `./.claude/skills/bbb/SKILL.md` | `~/.claude/skills/bbb/SKILL.md` | Claude Code skill only |
+| `--claude` | `./CLAUDE.md` | `~/.claude/CLAUDE.md` | Manage a self-contained marked section |
+| `--agents` | `./AGENTS.md` | effective Codex AGENTS file | Manage a self-contained marked section |
 | `--global` | — | — | Use user scope; requires an explicit preset or selector |
 | `--dry-run` | — | — | Print actions, write nothing to disk |
 | `--force` | — | — | Refresh artifacts; migrate a legacy trailing unmarked section |
 
-**Codex global precedence:** the instruction goes to `${CODEX_HOME:-$HOME/.codex}/AGENTS.override.md` when that file exists and is non-empty; otherwise it goes to `${CODEX_HOME:-$HOME/.codex}/AGENTS.md`. The effective path is printed. `CODEX_HOME` does not affect the global skill, which always goes to `$HOME/.agents/skills/bb-bash/SKILL.md`.
+**Codex global precedence:** the instruction goes to `${CODEX_HOME:-$HOME/.codex}/AGENTS.override.md` when that file exists and is non-empty; otherwise it goes to `${CODEX_HOME:-$HOME/.codex}/AGENTS.md`. The effective path is printed. `CODEX_HOME` does not affect the global skill, which always goes to `$HOME/.agents/skills/bbb/SKILL.md`.
 
 **Idempotency:** `CLAUDE.md` and `AGENTS.md` content is enclosed by `<!-- bb-bash:start -->` / `<!-- bb-bash:end -->`. Reinstallation replaces that section in place without duplicating it and preserves unrelated content. A legacy unmarked `## Bitbucket via bb-bash` section is skipped with a migration message; `--force` replaces that heading and all trailing content with the marked canonical section.
+
+**Skill-name migration:** the public skill name and new native destination are `bbb`. If the old `.../skills/bb-bash/SKILL.md` path exists, installation reports it and writes the new `bbb` path without deleting the legacy directory. Remove the old directory manually only after verifying the new skill is discovered.
 
 **Source:** artifacts are fetched from `https://raw.githubusercontent.com/restarter/bb-bash/${BB_BASH_REF:-main}/docs/agents/`. Pin to a release tag for reproducibility:
 
@@ -365,6 +368,7 @@ bbb install-agent --claude-code --global         # user Claude rule + skill
 bbb install-agent --codex                        # project AGENTS section + skill
 bbb install-agent --codex --global --dry-run     # show both effective user paths
 bbb install-agent --codex --global               # install both Codex artifacts
+bbb install-agent --codex-skill --global         # install only $bbb for Codex
 bbb install-agent --rule --skill --global        # backward-compatible granular form
 ```
 
