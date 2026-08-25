@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `bbb install-agent --claude-code` and `--codex` install native project/user instruction-and-skill pairs; `--codex-skill` installs only the Codex-native `$bbb` skill. Codex global instructions honor non-empty `AGENTS.override.md` precedence and `CODEX_HOME`, while the global skill always uses `$HOME/.agents/skills/bbb/`. Managed `AGENTS.md` / `CLAUDE.md` sections update in place without duplicating or overwriting unrelated content. Symlinks are refused rather than replaced, existing modes are preserved, and empty downloads cannot erase an artifact. (bb-bash-gz5)
+
+### Changed
+- Rule, managed snippet, and the renamed public `bbb` skill are independently usable. Each carries the complete safe PR workflow and the comment-writing conventions that prevent malformed Bitbucket Markdown and heredoc indentation/expansion errors; current syntax remains centralized in `bbb help <command>`. Existing granular installer flags remain available, and legacy `.../skills/bb-bash/` paths are reported without being silently deleted. (bb-bash-gz5)
+
 ### Fixed
 - Paginated PR readers no longer silently stop at the first page. `pr comments` now fetches the complete conversation and renders comments newest-first across all pages; `pr list`, external statuses in `pr checks`, and pipeline steps also use the shared complete-pagination helper. Absolute `.next` URLs are restricted to the current repository, and `BB_BASH_MAX_PAGES` (default 100, max 1000) emits an explicit warning if its safety cap leaves more results. Intentionally bounded pipeline discovery and diffstat retain their existing scan/truncation notices. (bb-bash-z8f)
 
