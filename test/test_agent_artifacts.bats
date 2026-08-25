@@ -2,6 +2,14 @@
 
 load test_helper
 
+setup() {
+    stub_paths
+}
+
+teardown() {
+    stub_paths_teardown
+}
+
 agent_artifacts() {
     printf '%s\n' \
         'docs/agents/bb-bash-rule.md' \
@@ -126,6 +134,16 @@ doc_synopsis() {
         fi
     done < <(bbb_command_surface)
     [ "$failed" -eq 0 ]
+}
+
+@test "documented pr inline --old spelling is accepted by the routed parser" {
+    stub_curl '{"id":1,"inline":{"path":"x.ts","from":10},"links":{"html":{"href":"http://x"}}}' 200
+    BB_BASH_EMAIL="test@example.com" BB_BASH_TOKEN="test-token" \
+        BB_BASH_WORKSPACE="testws" BB_BASH_REPO="testrepo" \
+        run "$BB_BASH_SCRIPT" pr inline --old 5 x.ts 10 "old code comment"
+    [ "$status" -eq 0 ]
+    contains "$(last_curl_call)" '*"from":10*'
+    not_contains "$(last_curl_call)" '*"to":10*'
 }
 
 @test "bbb -h and --help remain successful global help aliases" {

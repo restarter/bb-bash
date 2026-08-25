@@ -24,6 +24,15 @@ _run_bbb() {
         run "${BATS_TEST_DIRNAME}/../bbb" "$@"
 }
 
+_file_mode() {
+    local path="$1" mode
+    if mode=$(stat -f '%Lp' "$path" 2>/dev/null); then
+        printf '%s\n' "$mode"
+    else
+        stat -c '%a' "$path"
+    fi
+}
+
 # --- flag parsing ---
 
 @test "install-agent: --help exits 0 and prints synopsis" {
@@ -114,6 +123,41 @@ _run_bbb() {
     grep -q '^existing$' "$TEST_TMP/.claude/rules/bb-bash-rule.md"
 }
 
+@test "install-agent: empty successful download preserves existing artifact" {
+    mkdir -p "$TEST_TMP/.claude/rules"
+    printf 'existing\n' > "$TEST_TMP/.claude/rules/bb-bash-rule.md"
+    stub_curl_download ""
+    _run_bbb install-agent --rule --force
+    [ "$status" -ne 0 ]
+    contains "$output" "*empty agent artifact*"
+    grep -q '^existing$' "$TEST_TMP/.claude/rules/bb-bash-rule.md"
+}
+
+@test "install-agent: fresh artifacts are readable and forced updates preserve mode" {
+    stub_curl_download "first"
+    _run_bbb install-agent --rule
+    [ "$status" -eq 0 ]
+    [ "$(_file_mode "$TEST_TMP/.claude/rules/bb-bash-rule.md")" = "644" ]
+
+    chmod 640 "$TEST_TMP/.claude/rules/bb-bash-rule.md"
+    stub_curl_download "second"
+    _run_bbb install-agent --rule --force
+    [ "$status" -eq 0 ]
+    [ "$(_file_mode "$TEST_TMP/.claude/rules/bb-bash-rule.md")" = "640" ]
+}
+
+@test "install-agent: refuses a symlinked artifact without replacing it" {
+    mkdir -p "$TEST_TMP/.claude/rules"
+    printf 'shared\n' > "$TEST_TMP/shared-rule.md"
+    ln -s "$TEST_TMP/shared-rule.md" "$TEST_TMP/.claude/rules/bb-bash-rule.md"
+    stub_curl_download "replacement"
+    _run_bbb install-agent --rule --force
+    [ "$status" -ne 0 ]
+    contains "$output" "*refusing to replace symlink*"
+    [ -L "$TEST_TMP/.claude/rules/bb-bash-rule.md" ]
+    grep -q '^shared$' "$TEST_TMP/shared-rule.md"
+}
+
 # --- CLAUDE.md / AGENTS.md modes ---
 
 @test "install-agent: --claude creates CLAUDE.md when missing" {
@@ -157,17 +201,50 @@ new content"
     contains "$output" "*updated*"
     [ "$(grep -c '<!-- bb-bash:start -->' "$TEST_TMP/CLAUDE.md")" = "1" ]
     [ "$(grep -c 'Bitbucket via bb-bash' "$TEST_TMP/CLAUDE.md")" = "1" ]
-    ! grep -q 'old content' "$TEST_TMP/CLAUDE.md"
+    run grep -q 'old content' "$TEST_TMP/CLAUDE.md"
+    [ "$status" -ne 0 ]
 }
 
 @test "install-agent: --agents writes AGENTS.md (parallel to --claude)" {
     stub_curl_download "## Bitbucket via bb-bash
 agents content"
+    umask 077
     _run_bbb install-agent --agents
     [ "$status" -eq 0 ]
     [ -f "$TEST_TMP/AGENTS.md" ]
     grep -q "agents content" "$TEST_TMP/AGENTS.md"
+    [ "$(_file_mode "$TEST_TMP/AGENTS.md")" = "644" ]
     [ ! -f "$TEST_TMP/CLAUDE.md" ]
+}
+
+@test "install-agent: refuses a symlinked AGENTS.md without replacing it" {
+    printf '# Shared instructions\n' > "$TEST_TMP/shared.md"
+    ln -s "$TEST_TMP/shared.md" "$TEST_TMP/AGENTS.md"
+    stub_curl_download "new content"
+    _run_bbb install-agent --agents
+    [ "$status" -ne 0 ]
+    contains "$output" "*refusing to replace symlink*"
+    [ -L "$TEST_TMP/AGENTS.md" ]
+    grep -q '^# Shared instructions$' "$TEST_TMP/shared.md"
+}
+
+@test "install-agent: managed update preserves destination mode" {
+    printf '# Existing\n' > "$TEST_TMP/AGENTS.md"
+    chmod 640 "$TEST_TMP/AGENTS.md"
+    stub_curl_download "new content"
+    _run_bbb install-agent --agents
+    [ "$status" -eq 0 ]
+    [ "$(_file_mode "$TEST_TMP/AGENTS.md")" = "640" ]
+}
+
+@test "install-agent: empty snippet download preserves managed destination" {
+    printf '# Existing\n' > "$TEST_TMP/AGENTS.md"
+    cp -f "$TEST_TMP/AGENTS.md" "$TEST_TMP/before"
+    stub_curl_download ""
+    _run_bbb install-agent --agents
+    [ "$status" -ne 0 ]
+    contains "$output" "*empty agent artifact*"
+    cmp "$TEST_TMP/before" "$TEST_TMP/AGENTS.md"
 }
 
 # --- combined flags (real-world "all four at once") ---
@@ -322,6 +399,20 @@ canonical artifact"
     [ ! -e "$TEST_TMP/codex/AGENTS.md" ]
 }
 
+@test "install-agent: refuses a symlinked global AGENTS.override.md" {
+    mkdir -p "$TEST_TMP/codex"
+    printf '# Shared override\n' > "$TEST_TMP/shared-override.md"
+    ln -s "$TEST_TMP/shared-override.md" "$TEST_TMP/codex/AGENTS.override.md"
+    stub_curl_download "canonical artifact"
+    HOME="$TEST_TMP/home" CODEX_HOME="$TEST_TMP/codex" \
+        _run_bbb install-agent --codex --global
+    [ "$status" -ne 0 ]
+    contains "$output" "*refusing to replace symlink*"
+    [ -L "$TEST_TMP/codex/AGENTS.override.md" ]
+    grep -q '^# Shared override$' "$TEST_TMP/shared-override.md"
+    [ ! -e "$TEST_TMP/home/.agents/skills/bbb/SKILL.md" ]
+}
+
 @test "install-agent: empty AGENTS.override.md falls back to global AGENTS.md" {
     mkdir -p "$TEST_TMP/codex"
     : > "$TEST_TMP/codex/AGENTS.override.md"
@@ -341,7 +432,8 @@ canonical artifact"
     grep -q '^# Before$' "$TEST_TMP/AGENTS.md"
     grep -q '^# After$' "$TEST_TMP/AGENTS.md"
     grep -q 'new content' "$TEST_TMP/AGENTS.md"
-    ! grep -q '^old$' "$TEST_TMP/AGENTS.md"
+    run grep -q '^old$' "$TEST_TMP/AGENTS.md"
+    [ "$status" -ne 0 ]
     [ "$(grep -c '<!-- bb-bash:start -->' "$TEST_TMP/AGENTS.md")" = "1" ]
 
     cp -f "$TEST_TMP/AGENTS.md" "$TEST_TMP/after-first-install"
@@ -377,6 +469,15 @@ canonical artifact"
     _run_bbb install-agent --agents --force
     [ "$status" -ne 0 ]
     contains "$output" "*not trailing*"
+    cmp "$TEST_TMP/before" "$TEST_TMP/AGENTS.md"
+}
+
+@test "install-agent: dry-run predicts failure for ambiguous non-trailing legacy section" {
+    printf '# Project\n\n## Bitbucket via bb-bash\nold\n\n## Unrelated\nkeep\n' > "$TEST_TMP/AGENTS.md"
+    cp -f "$TEST_TMP/AGENTS.md" "$TEST_TMP/before"
+    _run_bbb install-agent --agents --force --dry-run
+    [ "$status" -ne 0 ]
+    contains "$output" "*live install would require manual migration*"
     cmp "$TEST_TMP/before" "$TEST_TMP/AGENTS.md"
 }
 

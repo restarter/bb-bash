@@ -53,7 +53,7 @@ Choose an independently usable always-on instruction, the lazy `bbb` skill, or b
 | `--rule` / `--skill` / `--claude` / `--agents` | Granular instruction-only or Claude skill-only selectors |
 | `--global` | Install the selected integration in user scope instead of project scope |
 | `--dry-run` | Preview the writes without touching disk |
-| `--force` | Overwrite an existing artifact (default is skip-if-exists) |
+| `--force` | Refresh existing standalone files and migrate a trailing legacy unmarked section; managed sections otherwise update in place |
 
 Pin to a release tag for reproducibility: `BB_BASH_REF=v0.3.1 bbb install-agent ...`. Full flag reference: [docs/commands.md#install-agent](docs/commands.md#install-agent).
 

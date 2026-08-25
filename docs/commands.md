@@ -352,6 +352,8 @@ Worth knowing for AI agents: installed artifacts are copies and `bbb` may have b
 
 **Idempotency:** `CLAUDE.md` and `AGENTS.md` content is enclosed by `<!-- bb-bash:start -->` / `<!-- bb-bash:end -->`. Reinstallation replaces that section in place without duplicating it and preserves unrelated content. A legacy unmarked `## Bitbucket via bb-bash` section is skipped with a migration message; `--force` replaces that heading and all trailing content with the marked canonical section.
 
+Symlink destinations are refused rather than silently replaced; update the linked target explicitly. Existing file permissions are preserved, and empty downloads are rejected before any destination is changed. A forced migration of a non-trailing legacy section fails in both dry-run and live modes because its end boundary is ambiguous.
+
 **Skill-name migration:** the public skill name and new native destination are `bbb`. If the old `.../skills/bb-bash/SKILL.md` path exists, installation reports it and writes the new `bbb` path without deleting the legacy directory. Remove the old directory manually only after verifying the new skill is discovered.
 
 **Source:** artifacts are fetched from `https://raw.githubusercontent.com/restarter/bb-bash/${BB_BASH_REF:-main}/docs/agents/`. Pin to a release tag for reproducibility:

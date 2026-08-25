@@ -37,7 +37,7 @@
 #   bbb raw-post <endpoint> <json>             - Raw API call (POST)
 #   bbb raw-put <endpoint> <json>              - Raw API call (PUT)
 #   bbb raw-delete <endpoint>                  - Raw API call (DELETE; exits non-zero on failure)
-#   bbb install-agent [--claude-code|--codex] [--global]
+#   bbb install-agent [--claude-code|--codex|--codex-skill|--rule|--skill|--claude|--agents] [--global]
 #                                                 - Install native self-contained instruction + lazy skill
 #   bbb help [<command>]  (also -h, --help)    - Show usage; no .env or Bitbucket repo needed
 
@@ -433,12 +433,27 @@ batch_action() {
 # Download docs/<src> from the bbb repo (ref from BB_BASH_REF, default main)
 # and write to <dest>. Honors $INSTALL_AGENT_DRY_RUN and $INSTALL_AGENT_FORCE
 # (set by cmd_install_agent before calling).
+_install_agent_reject_symlink() {
+    local dest="$1"
+    [[ ! -L "$dest" ]] || die "refusing to replace symlink destination: $dest (update its target explicitly)"
+}
+
+_install_agent_file_mode() {
+    local path="$1" mode
+    if mode=$(stat -f '%Lp' "$path" 2>/dev/null); then
+        printf '%s\n' "$mode"
+    else
+        stat -c '%a' "$path" 2>/dev/null || die "cannot read file mode: $path"
+    fi
+}
+
 _install_agent_fetch() {
     local src="$1" dest="$2"
-    local existed=false tmp
+    local existed=false tmp dest_mode
     local ref="${BB_BASH_REF:-main}"
     local url="https://raw.githubusercontent.com/restarter/bb-bash/${ref}/docs/agents/${src}"
 
+    _install_agent_reject_symlink "$dest"
     [[ -e "$dest" ]] && existed=true
     if [[ "${INSTALL_AGENT_DRY_RUN:-false}" == "true" ]]; then
         echo "  [dry-run] fetch: $url"
@@ -463,6 +478,16 @@ _install_agent_fetch() {
         rm -f -- "$tmp"
         die "failed to fetch $url"
     fi
+    if [[ ! -s "$tmp" ]]; then
+        rm -f -- "$tmp"
+        die "refusing empty agent artifact from $url"
+    fi
+    if [[ "$existed" == "true" ]]; then
+        dest_mode=$(_install_agent_file_mode "$dest")
+        chmod "$dest_mode" "$tmp"
+    else
+        chmod 644 "$tmp"
+    fi
     mv -f -- "$tmp" "$dest"
     if [[ "$existed" == "true" ]]; then
         echo "  updated: $dest"
@@ -484,6 +509,7 @@ _install_agent_md_section() {
     local start_count=0 end_count=0
     local legacy_present=false legacy_trailing=false
 
+    _install_agent_reject_symlink "$dest"
     if [[ -f "$dest" ]]; then
         start_count=$(awk -v marker="$start_marker" '$0 == marker { n++ } END { print n+0 }' "$dest")
         end_count=$(awk -v marker="$end_marker" '$0 == marker { n++ } END { print n+0 }' "$dest")
@@ -517,7 +543,7 @@ _install_agent_md_section() {
             if [[ "${INSTALL_AGENT_FORCE:-false}" == "true" && "$legacy_trailing" == "true" ]]; then
                 echo "  [dry-run] updated: $dest (migrate legacy trailing section)"
             elif [[ "${INSTALL_AGENT_FORCE:-false}" == "true" ]]; then
-                echo "  [dry-run] skipped: $dest (legacy section is not trailing; manual migration required)"
+                die "legacy bb-bash section in $dest is not trailing; live install would require manual migration"
             else
                 echo "  [dry-run] skipped: $dest (legacy unmarked section; use --force to migrate)"
             fi
@@ -540,23 +566,29 @@ _install_agent_md_section() {
         die "legacy bb-bash section in $dest is not trailing; migrate it manually to preserve later content"
     fi
 
-    local snippet section merged
+    local snippet section merged dest_mode
     snippet=$(mktemp)
     section=$(mktemp)
     if ! curl --proto '=https' --tlsv1.2 -fsSL --max-redirs 5 "$url" -o "$snippet"; then
         rm -f "$snippet" "$section"
         die "failed to fetch $url"
     fi
+    if [[ ! -s "$snippet" ]]; then
+        rm -f "$snippet" "$section"
+        die "refusing empty agent artifact from $url"
+    fi
     {
         printf '%s\n' "$start_marker"
         cat -- "$snippet"
         printf '\n%s\n' "$end_marker"
     } > "$section"
+    chmod 644 "$section"
 
     mkdir -p -- "$(dirname -- "$dest")"
 
     if [[ ! -f "$dest" ]]; then
         cp -f -- "$section" "$dest"
+        chmod 644 "$dest"
         echo "  created: $dest"
     else
         merged=$(mktemp -- "${dest}.bb-bash-XXXXXX")
@@ -583,6 +615,8 @@ _install_agent_md_section() {
             rm -f -- "$merged"
             echo "  skipped: $dest (managed section is current)"
         else
+            dest_mode=$(_install_agent_file_mode "$dest")
+            chmod "$dest_mode" "$merged"
             mv -f -- "$merged" "$dest"
             echo "  updated: $dest"
         fi

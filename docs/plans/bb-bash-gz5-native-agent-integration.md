@@ -102,6 +102,8 @@ Legacy unmarked `## Bitbucket via bb-bash` sections are not silently rewritten b
 
 `--dry-run` performs no destination writes or downloads. It reports every effective destination and whether the action would create, update, or skip it. All path handling remains quoted and works with spaces and missing parent directories.
 
+Refuse symlink destinations instead of replacing the link, preserve existing file modes, create fresh public artifacts with readable modes, and reject empty successful downloads before changing a destination.
+
 ## Test-first execution order
 
 First rewrite/add failing tests for self-contained artifact and comment-writing coverage, then command-help/router/docs consistency.

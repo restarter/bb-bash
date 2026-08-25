@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `bbb install-agent --claude-code` and `--codex` install native project/user instruction-and-skill pairs; `--codex-skill` installs only the Codex-native `$bbb` skill. Codex global instructions honor non-empty `AGENTS.override.md` precedence and `CODEX_HOME`, while the global skill always uses `$HOME/.agents/skills/bbb/`. Managed `AGENTS.md` / `CLAUDE.md` sections update in place without duplicating or overwriting unrelated content. (bb-bash-gz5)
+- `bbb install-agent --claude-code` and `--codex` install native project/user instruction-and-skill pairs; `--codex-skill` installs only the Codex-native `$bbb` skill. Codex global instructions honor non-empty `AGENTS.override.md` precedence and `CODEX_HOME`, while the global skill always uses `$HOME/.agents/skills/bbb/`. Managed `AGENTS.md` / `CLAUDE.md` sections update in place without duplicating or overwriting unrelated content. Symlinks are refused rather than replaced, existing modes are preserved, and empty downloads cannot erase an artifact. (bb-bash-gz5)
 
 ### Changed
 - Rule, managed snippet, and the renamed public `bbb` skill are independently usable. Each carries the complete safe PR workflow and the comment-writing conventions that prevent malformed Bitbucket Markdown and heredoc indentation/expansion errors; current syntax remains centralized in `bbb help <command>`. Existing granular installer flags remain available, and legacy `.../skills/bb-bash/` paths are reported without being silently deleted. (bb-bash-gz5)
