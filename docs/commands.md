@@ -359,7 +359,7 @@ Symlink destinations are refused rather than silently replaced; update the linke
 **Source:** artifacts are fetched from `https://raw.githubusercontent.com/restarter/bb-bash/${BB_BASH_REF:-main}/docs/agents/`. Pin to a release tag for reproducibility:
 
 ```bash
-BB_BASH_REF=v0.3.1 bbb install-agent --rule --skill --claude --agents
+BB_BASH_REF=v0.3.2 bbb install-agent --rule --skill --claude --agents
 ```
 
 **Examples:**
