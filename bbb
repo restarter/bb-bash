@@ -10,7 +10,8 @@
 #
 # Usage (see usage() for the live list; this header summarizes):
 #   bbb pr list [--state=<s>] [--author=<u>]   - List PRs (default: open)
-#   bbb pr create <target> <title> [desc]      - Create PR from current branch
+#   bbb pr create <target> <title> [desc] [--draft]
+#                                                 - Create PR from current branch; --draft opens it as a draft
 #   bbb pr update <id> [--title=...] [--description=...] [--reviewers=u1,u2] [--destination=<branch>]
 #                                                 - Update PR metadata; --destination retargets the PR
 #   bbb pr show <id>                           - PR details + changed files
@@ -25,6 +26,8 @@
 #   bbb pr approve <id> [id ...]               - Approve PR(s), batch-capable
 #   bbb pr request-changes <id> [id ...]       - Mark Changes Requested, PR stays open, batch-capable
 #   bbb pr unrequest-changes <id> [id ...]     - Withdraw Changes Requested, batch-capable
+#   bbb pr draft <id> [id ...]                 - Mark PR(s) as draft, batch-capable
+#   bbb pr ready <id> [id ...]                 - Mark draft PR(s) ready for review, batch-capable
 #   bbb pr decline <id> [id ...]               - Decline (close without merge), batch-capable
 #   bbb pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=...]
 #                                                 - Merge PR (default strategy: merge_commit)
@@ -353,7 +356,16 @@ api_post() {
     echo "$body"
 }
 
+# api_put [--soft] <endpoint> <data>
+# Default: dies on HTTP >=400.
+# --soft: prints body to stdout, returns 1 on HTTP >=400.
+# Mirrors api_post so a batch command can keep looping past one bad id.
 api_put() {
+    local soft=0
+    if [[ "${1:-}" == "--soft" ]]; then
+        soft=1
+        shift
+    fi
     local endpoint="$1"
     local data="$2"
     local url="${BASE_URL}${endpoint}"
@@ -366,6 +378,10 @@ api_put() {
     http_code=$(echo "$response" | tail -n1)
     body=$(echo "$response" | sed '$d')
     if [[ "$http_code" -ge 400 ]]; then
+        if [[ $soft -eq 1 ]]; then
+            echo "$body"
+            return 1
+        fi
         local msg
         msg=$(echo "$body" | jq -r '.error.message // .error // empty' 2>/dev/null || echo "$body")
         die "API error (HTTP $http_code): ${msg:-$body}"
@@ -381,9 +397,23 @@ api_delete() {
         "$url" || die "network error contacting Bitbucket (curl failed): $url"
 }
 
-# batch_action <label> <endpoint-template> <jq-success-msg> "$@"
-# Loop over 1+ PR IDs, call api_post --soft on each, print per-PR result.
+# batch_action [--method=POST|PUT] [--body=<json>] <label> <endpoint-template> <jq-success-msg> "$@"
+# Loop over 1+ PR IDs, call the API on each, print per-PR result.
 # Sleep 0.3s (or $BB_BASH_BATCH_DELAY) between calls when total > 1.
+#
+# Optional leading flags (defaults keep every pre-existing call byte-identical):
+#   --method=  POST (default) or PUT
+#   --body=    request body, default "{}"
+# Flag parsing stops at the first NON-FLAG argument, and an unrecognized --flag
+# is fatal rather than falling through: without that arm a typo like --methd=PUT
+# would silently become the LABEL, printing "PR #12 --methd=PUT (OPEN)" while
+# POSTing to the endpoint. Labels are in-code literals and never start with "--",
+# so the --*) arm can never swallow a real one.
+#
+# NOT usable for DELETE, and --method does not change that: api_delete sends no
+# body and returns only the HTTP status, while the success path below formats a
+# response BODY with the caller's jq expression. See docs/contributing.md and
+# cmd_pr_unrequest_changes, which hand-rolls the same loop shape for that reason.
 #
 # Arguments:
 #   $1 = label              human verb past tense (e.g. "approved by", "declined")
@@ -391,6 +421,25 @@ api_delete() {
 #   $3 = jq-success-msg     jq expression applied to response body for success suffix
 #   $@ = PR IDs
 batch_action() {
+    local method="POST" body="{}"
+    while [[ $# -gt 0 ]]; do
+        case "${1:-}" in
+            --method=*) method="${1#--method=}"; shift ;;
+            --body=*)   body="${1#--body=}"; shift ;;
+            --*)        die "Unknown flag: $1" ;;
+            *)          break ;;
+        esac
+    done
+    case "$method" in
+        POST|PUT) ;;
+        *) die "batch_action: unsupported method: $method (POST or PUT)" ;;
+    esac
+    # Loop-invariant — resolved once, not per id. A plain `if`, never
+    # `[[ ... ]] && api_fn=...`: as a statement the && form returns 1 when the
+    # condition is false, which under `set -e` fails the function. Same trap
+    # documented below for the inter-call sleep.
+    local api_fn="api_post"
+    if [[ "$method" == "PUT" ]]; then api_fn="api_put"; fi
     local label="$1" endpoint_tmpl="$2" jq_msg="$3"
     shift 3
     local id resp total=$# i=0
@@ -398,7 +447,7 @@ batch_action() {
         require_numeric "PR id" "$id"
         i=$((i + 1))
         local endpoint="${endpoint_tmpl//\{id\}/$id}"
-        if resp=$(api_post --soft "$endpoint" "{}"); then
+        if resp=$("$api_fn" --soft "$endpoint" "$body"); then
             local msg
             # Coerce null/empty to "ok" inside jq so we never print "(null)".
             msg=$(echo "$resp" | jq -r "($jq_msg) // \"ok\" | tostring" 2>/dev/null || echo "ok")
@@ -728,17 +777,44 @@ cmd_pr_list() {
     fi
 
     api_get_paged "/pullrequests?${query}" | jq -r '
-        .values[] | "PR #\(.id) [\(.state)] \(.title)\n  Author: \(.author.display_name)\n  Branch: \(.source.branch.name) -> \(.destination.branch.name)\n"'
+        .values[] | "PR #\(.id) [\(.state)]\(if .draft then " [draft]" else "" end) \(.title)\n  Author: \(.author.display_name)\n  Branch: \(.source.branch.name) -> \(.destination.branch.name)\n"'
 }
 
 cmd_pr_create() {
     local target="$1"
     local title="$2"
     shift 2
-    local description="${*:-}"
+
+    # --draft is scanned out of the remaining args BEFORE they are joined into
+    # the description; otherwise the flag would land inside the description text.
+    # Consequence, deliberate: a description consisting of the single bare word
+    # "--draft" cannot be expressed. A description that merely contains the word
+    # among others is unaffected.
+    #
+    # An explicit array walk rather than "${*:-}": on bash 3.2 (macOS) an empty
+    # array under `set -u` is an error even via [*], so the count is checked
+    # first. Same shape as the `filters` array in cmd_pr_list.
+    local draft=0
+    local parts=()
+    local a
+    for a in "$@"; do
+        if [[ "$a" == "--draft" ]]; then
+            draft=1
+        else
+            parts+=("$a")
+        fi
+    done
+    local description=""
+    if [[ ${#parts[@]} -gt 0 ]]; then
+        description="${parts[*]}"
+    fi
 
     [[ -n "$target" ]] || die "Target branch is required"
     [[ -n "$title" ]] || die "Title is required"
+    # The router's `require_args 2` counts arguments, so `bbb pr create main
+    # --draft` satisfies it and would otherwise open a PR titled "--draft".
+    [[ "$target" != --* ]] || die "Target branch is required (flags go after the title)"
+    [[ "$title" != --* ]] || die "Title is required (did you mean: bbb pr create <target> <title> --draft?)"
 
     local source
     source=$(git -C "$(pwd)" symbolic-ref --short HEAD 2>/dev/null) \
@@ -755,6 +831,13 @@ cmd_pr_create() {
         --arg src "$source" \
         --arg dst "$target" \
         '{title: $title, description: $desc, source: {branch: {name: $src}}, destination: {branch: {name: $dst}}}')
+
+    # Conditional, like cmd_pr_update's fields: an unflagged create keeps the
+    # exact payload it has always sent. Verified live — POST accepts draft:true
+    # and the PR comes back state=OPEN, draft=true.
+    if [[ $draft -eq 1 ]]; then
+        payload=$(echo "$payload" | jq -c '. + {draft: true}')
+    fi
 
     api_post "/pullrequests" "$payload" \
         | jq -r '"PR #\(.id) created: \(.links.html.href)"'
@@ -890,6 +973,7 @@ cmd_pr_show() {
         | ([.participants[]? | select(.role != "REVIEWER" and .state == "approved")]) as $extra
         | ([ "PR #\(.id): \(.title)",
              "State:       \(.state)",
+             "Draft:       \(if .draft then "yes" else "no" end)",
              "Author:      \(.author.display_name)",
              "Branch:      \(.source.branch.name) -> \(.destination.branch.name)",
              "Reviewers:   " + (if ($revs | length) == 0 then "(none assigned)"
@@ -1315,6 +1399,27 @@ cmd_pr_unrequest_changes() {
     done
 }
 
+# Draft state is a boolean ON the PR, not a value of .state: a draft PR is
+# state=OPEN with draft=true. Verified live (bb-bash-smx, 2026-08-07) — see
+# docs/design.md:
+#   - a draft-only PUT needs NO title resent, unlike --destination in pr update
+#   - it does not null description or reviewers
+#   - setting the flag to the value it already holds returns 200, so there is
+#     no "nothing to do" arm to write (contrast cmd_pr_unrequest_changes' 404)
+# The suffix reports .state rather than the draft flag: "marked draft (draft)"
+# says nothing, while (OPEN) confirms the PR is still open.
+cmd_pr_draft() {
+    require_args 1 $# "Usage: bbb pr draft <id> [id ...]"
+    batch_action --method=PUT --body='{"draft":true}' \
+        "marked draft" "/pullrequests/{id}" '.state // "ok"' "$@"
+}
+
+cmd_pr_ready() {
+    require_args 1 $# "Usage: bbb pr ready <id> [id ...]"
+    batch_action --method=PUT --body='{"draft":false}' \
+        "marked ready for review" "/pullrequests/{id}" '.state // "ok"' "$@"
+}
+
 # pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=<text>]
 # Default strategy: merge_commit (Bitbucket's most common UI default).
 # Explicit override via flags. No repo-default fetch (the API field
@@ -1627,7 +1732,7 @@ command_help() {
     local key="$*"
     case "$key" in
         "pr list") echo "Usage: bbb pr list [--state=open|merged|declined|superseded|all] [--author=<user>]" ;;
-        "pr create") echo 'Usage: bbb pr create <target_branch> "title" [description]' ;;
+        "pr create") echo 'Usage: bbb pr create <target_branch> "title" [description] [--draft]' ;;
         "pr update") echo "Usage: bbb pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2] [--destination=<branch>]" ;;
         "pr show") echo "Usage: bbb pr show <id>" ;;
         "pr open") echo "Usage: bbb pr open <id>" ;;
@@ -1641,6 +1746,8 @@ command_help() {
         "pr decline") echo "Usage: bbb pr decline <id> [id ...]" ;;
         "pr request-changes") echo "Usage: bbb pr request-changes <id> [id ...]" ;;
         "pr unrequest-changes") echo "Usage: bbb pr unrequest-changes <id> [id ...]" ;;
+        "pr draft") echo "Usage: bbb pr draft <id> [id ...]" ;;
+        "pr ready") echo "Usage: bbb pr ready <id> [id ...]" ;;
         "pr merge") echo "Usage: bbb pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=<text>]" ;;
         "pr reply") echo "Usage: bbb pr reply <pr_id> <comment_id> <text>" ;;
         "pr edit-comment") echo "Usage: bbb pr edit-comment <pr_id> <comment_id> <text>" ;;
@@ -1664,7 +1771,7 @@ usage() {
     echo ""
     echo "Usage:"
     echo "  bbb pr list [--state=open|merged|declined|superseded|all] [--author=<user>]   List PRs"
-    echo "  bbb pr create <target> <title> [desc]        Create PR from current branch"
+    echo "  bbb pr create <target> <title> [desc] [--draft]  Create PR from current branch (--draft: as a draft)"
     echo "  bbb pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2] [--destination=<branch>]"
     echo "                                               Update PR metadata (--destination retargets)"
     echo "  bbb pr show <id>                             PR details + changed files"
@@ -1677,7 +1784,9 @@ usage() {
     echo "  bbb pr inline [--old] <id> <path> <line> <text>  Inline comment (default new code, --old for deleted)"
     echo "  bbb pr approve <id> [id ...]                 Approve PR, batch-capable"
     echo "  bbb pr request-changes <id> [id ...]         Mark Changes Requested (PR stays open), batch-capable"
-    echo "  bbb pr unrequest-changes <id> [id ...]       Withdraw Changes Requested, batch-capable"
+    echo "  bbb pr unrequest-changes <id> [id ...]       Withdraw Changes Requested, batch-capable
+  bbb pr draft <id> [id ...]                   Mark PR(s) as draft, batch-capable
+  bbb pr ready <id> [id ...]                   Mark draft PR(s) ready for review, batch-capable"
     echo "  bbb pr decline <id> [id ...]                 Decline (close without merge), batch-capable"
     echo "  bbb pr merge <id> [--squash|--commit|--ff] [--delete-branch]  Merge PR (default: merge_commit)"
     echo "  bbb pr reply <pr_id> <comment_id> <text>   Reply to a comment"
@@ -1741,6 +1850,8 @@ main() {
                 decline)        cmd_pr_decline "$@" ;;
                 request-changes)   cmd_pr_request_changes "$@" ;;
                 unrequest-changes) cmd_pr_unrequest_changes "$@" ;;
+                draft)          cmd_pr_draft "$@" ;;
+                ready)          cmd_pr_ready "$@" ;;
                 merge)          cmd_pr_merge "$@" ;;
                 reply)          require_args 3 $# "Usage: bbb pr reply <pr_id> <comment_id> <text>"; cmd_pr_reply "$@" ;;
                 edit-comment)   require_args 3 $# "Usage: bbb pr edit-comment <pr_id> <comment_id> <text>"; cmd_pr_edit_comment "$@" ;;

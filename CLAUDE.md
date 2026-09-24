@@ -73,7 +73,7 @@ Single-file bash script (`bbb`), divided into clearly-labeled sections. See [doc
 
 1. Usage docstring (header comment)
 2. Helpers (`die`, `resolve_script_dir`, `require_args`, `require_numeric`, `require_pipeline_scan`, `urlencode`, `resolve_workspace_repo`, `batch_action`, `JQ_NORM`)
-3. API helpers (`api_get`, `api_post` with `--soft`; `api_put`, `api_delete`)
+3. API helpers (`api_get`, `api_post`, `api_put` — each with `--soft`; `api_delete`)
 4. Commands (`cmd_pr_*`, `cmd_pipeline_*`, `cmd_raw*`)
 5. `usage()`
 6. `main()` router

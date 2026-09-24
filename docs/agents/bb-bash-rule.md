@@ -43,4 +43,6 @@ bbb pr comment 42 "$body"
 
 For retargeting, inspect the PR, run `bbb pr update <id> --destination=<branch>`, then verify the destination and resulting diff. Use raw API commands only when no routed command covers the operation; keep endpoints repository-relative, construct JSON safely, authorize writes explicitly, and read results back. Never put credentials in endpoints, payloads, logs, or reports.
 
+Draft is a flag, not a state: a draft PR is `state=OPEN` with `draft=true`, so `pr list --state=open` includes drafts and there is no `--state=draft`. Spot one by the `[draft]` marker in `pr list` or the `Draft:` line in `pr show`. `bbb pr create ... --draft` opens a PR as a draft; `bbb pr draft <id>` / `bbb pr ready <id>` toggle the flag and are idempotent. `pr ready` publishes your own draft and is not a review verdict. Bitbucket refuses to merge a draft, so `pr ready` comes before `pr merge`.
+
 Use `gh` for GitHub. Bitbucket Server/Data Center and workspace administration are outside `bbb` scope.

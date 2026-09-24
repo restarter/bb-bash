@@ -25,13 +25,13 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 ## pr create
 
-**Synopsis:** `bbb pr create <target_branch> "title" [description]`
+**Synopsis:** `bbb pr create <target_branch> "title" [description] [--draft]`
 
-**Description:** Create a PR from the current git branch to `<target_branch>`.
+**Description:** Create a PR from the current git branch to `<target_branch>`. `--draft` opens it as a draft (see `pr draft`).
 
 **Required scopes:** `write:pullrequest:bitbucket`
 
-**Notes:** must be run from inside a git repo; source branch = current branch.
+**Notes:** must be run from inside a git repo; source branch = current branch. `--draft` may appear anywhere after the title and is removed before the remaining arguments are joined into the description — so a description that is the single bare word `--draft` cannot be expressed, though one that merely contains the word is fine. The flag is not accepted in the target or title position; `bbb pr create main --draft` is rejected rather than creating a PR titled `--draft`.
 
 ---
 
@@ -220,6 +220,30 @@ If the shared page safety limit is reached while more data remains, the command 
 **Required scopes:** `write:pullrequest:bitbucket`
 
 **Example:** `bbb pr unrequest-changes 42`
+
+---
+
+## pr draft
+
+**Synopsis:** `bbb pr draft <id> [id ...]`
+
+**Description:** Mark one or more PRs as draft. Batch-capable. Draft is a **boolean on the PR, not a value of `state`** — a draft PR is `state=OPEN` with `draft=true`, so `pr list --state=open` still returns it and there is no `--state=draft`. Idempotent: marking an already-draft PR returns 200, not an error. Implemented as `PUT {"draft":true}`; unlike a destination-only PUT, a draft-only PUT does not need the title resent and leaves description and reviewers untouched.
+
+**Required scopes:** `write:pullrequest:bitbucket`
+
+**Example:** `bbb pr draft 42 43`
+
+---
+
+## pr ready
+
+**Synopsis:** `bbb pr ready <id> [id ...]`
+
+**Description:** Mark one or more draft PRs ready for review — the inverse of `pr draft`, and unrelated to `pr approve` (it publishes your own draft, it is not a review verdict). Batch-capable and idempotent on the same terms. Bitbucket refuses to merge a draft, so this is the step before `pr merge`.
+
+**Required scopes:** `write:pullrequest:bitbucket`
+
+**Example:** `bbb pr ready 42`
 
 ---
 

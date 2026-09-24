@@ -19,6 +19,30 @@ teardown() {
     [ "$REPO" = "myrepo" ]
 }
 
+# cmd_pr_create reads the branch with `git -C "$(pwd)" symbolic-ref --short HEAD`,
+# so the stub must survive the -C prefix — without stripping it, $1 is "-C" and
+# the case never reaches any arm.
+@test "stub_git: answers symbolic-ref through a -C prefix" {
+    stub_git --branch=feature/x "origin=https://bitbucket.org/ws/repo.git"
+    run git -C "$(pwd)" symbolic-ref --short HEAD
+    [ "$status" -eq 0 ]
+    contains "$output" 'feature/x'
+}
+
+@test "stub_git: --branch does not disturb the remote arms" {
+    stub_git --branch=feature/x "origin=https://bitbucket.org/ws/repo.git"
+    unset WORKSPACE REPO
+    resolve_workspace_repo
+    [ "$WORKSPACE" = "ws" ]
+    [ "$REPO" = "repo" ]
+}
+
+@test "stub_git: without --branch, symbolic-ref still falls through" {
+    stub_git "origin=https://bitbucket.org/ws/repo.git"
+    run git symbolic-ref --short HEAD
+    [ "$status" -ne 0 ]
+}
+
 @test "resolve_workspace_repo: parses HTTPS URL" {
     stub_git "origin=https://bitbucket.org/anotherws/anotherrepo.git"
     unset WORKSPACE REPO
@@ -82,6 +106,20 @@ teardown() {
 @test "api_post (hard mode): dies on 4xx" {
     stub_curl '{"error":{"message":"forbidden"}}' 403
     run api_post "/some/endpoint" '{}'
+    [ "$status" -ne 0 ]
+    contains "$output" '*API error*'
+}
+
+@test "api_put --soft: returns body on 4xx with non-zero exit" {
+    stub_curl '{"error":{"message":"not found"}}' 404
+    run api_put --soft "/some/endpoint" '{}'
+    [ "$status" -ne 0 ]
+    contains "$output" '*not found*'
+}
+
+@test "api_put (hard mode): dies on 4xx" {
+    stub_curl '{"error":{"message":"forbidden"}}' 403
+    run api_put "/some/endpoint" '{}'
     [ "$status" -ne 0 ]
     contains "$output" '*API error*'
 }
@@ -175,4 +213,41 @@ teardown() {
     [ "$status" -eq 0 ]
     contains "$output" '*PR #42*'
     contains "$output" '*declined*'
+}
+
+# The actual gate for "--method/--body defaults leave approve/decline/
+# request-changes byte-identical". Nothing else in the suite asserts the
+# outbound method or body for a batch call, so a flipped default would
+# otherwise stay green.
+@test "batch_action: with no flags it still POSTs an empty body" {
+    stub_curl '{"state":"DECLINED"}' 200
+    run batch_action "declined" "/pullrequests/{id}/decline" '.state' 42
+    [ "$status" -eq 0 ]
+    contains "$(last_curl_call)" '*-X POST*'
+    contains "$(last_curl_call)" '*-d {}*'
+}
+
+@test "batch_action: --method=PUT sends a PUT with the given body" {
+    stub_curl '{"state":"OPEN","draft":true}' 200
+    run batch_action --method=PUT --body='{"draft":true}' \
+        "marked draft" "/pullrequests/{id}" '.state' 42
+    [ "$status" -eq 0 ]
+    contains "$(last_curl_call)" '*-X PUT*'
+    contains "$(last_curl_call)" '*-d {"draft":true}*'
+}
+
+# A typo must not fall through to the label position: without the --*) arm
+# this printed "PR #42 --methd=PUT (DECLINED)" and POSTed anyway.
+@test "batch_action: an unknown flag is fatal, not a label" {
+    stub_curl '{"state":"DECLINED"}' 200
+    run batch_action --methd=PUT "declined" "/pullrequests/{id}/decline" '.state' 42
+    [ "$status" -ne 0 ]
+    contains "$output" '*Unknown flag*'
+}
+
+@test "batch_action: an unsupported method is rejected" {
+    stub_curl '{}' 200
+    run batch_action --method=DELETE "x" "/pullrequests/{id}" '.state' 42
+    [ "$status" -ne 0 ]
+    contains "$output" '*unsupported method*'
 }

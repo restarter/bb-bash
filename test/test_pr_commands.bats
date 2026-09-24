@@ -146,6 +146,149 @@ teardown() {
     [ "$status" -ne 0 ]
 }
 
+@test "pr draft: sends a PUT with draft:true" {
+    stub_curl '{"id":12,"state":"OPEN","draft":true}' 200
+    run cmd_pr_draft 12
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #12*marked draft*'
+    contains "$(last_curl_call)" '*-X PUT*'
+    contains "$(last_curl_call)" '*/pullrequests/12*'
+    contains "$(last_curl_call)" '*{"draft":true}*'
+}
+
+@test "pr ready: sends a PUT with draft:false" {
+    stub_curl '{"id":12,"state":"OPEN","draft":false}' 200
+    run cmd_pr_ready 12
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #12*marked ready for review*'
+    contains "$(last_curl_call)" '*-X PUT*'
+    contains "$(last_curl_call)" '*{"draft":false}*'
+}
+
+# The suffix reports the server's .state, not the draft flag we just sent:
+# "marked draft (draft)" says nothing, "(OPEN)" confirms the PR is still open.
+@test "pr draft: success suffix reports the state, not the flag" {
+    stub_curl '{"id":12,"state":"OPEN","draft":true}' 200
+    run cmd_pr_draft 12
+    [ "$status" -eq 0 ]
+    contains "$output" '*marked draft (OPEN)*'
+}
+
+@test "pr draft: batch hits every id" {
+    stub_curl_seq \
+        200 '{"id":12,"state":"OPEN","draft":true}' \
+        200 '{"id":13,"state":"OPEN","draft":true}'
+    BB_BASH_BATCH_DELAY=0 run cmd_pr_draft 12 13
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #12*marked draft*'
+    contains "$output" '*PR #13*marked draft*'
+    contains "$(nth_curl_call 1)" '*/pullrequests/12*'
+    contains "$(nth_curl_call 2)" '*/pullrequests/13*'
+}
+
+# This is the test that proves api_put --soft was necessary: without it the
+# 404 would die and id 3 would never be called.
+@test "pr draft: batch continues past a per-item failure" {
+    stub_curl_seq \
+        200 '{"id":1,"state":"OPEN","draft":true}' \
+        404 '{"error":{"message":"PR not found"}}' \
+        200 '{"id":3,"state":"OPEN","draft":true}'
+    BB_BASH_BATCH_DELAY=0 run cmd_pr_draft 1 2 3
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #2*error*PR not found*'
+    contains "$output" '*PR #3*marked draft*'
+    contains "$(nth_curl_call 3)" '*/pullrequests/3*'
+}
+
+@test "pr draft: requires at least one ID" {
+    run cmd_pr_draft
+    [ "$status" -ne 0 ]
+}
+
+@test "pr ready: requires at least one ID" {
+    run cmd_pr_ready
+    [ "$status" -ne 0 ]
+}
+
+@test "pr draft: rejects a non-numeric id" {
+    stub_curl '{"id":1,"state":"OPEN"}' 200
+    run cmd_pr_draft abc
+    [ "$status" -ne 0 ]
+}
+
+@test "pr create --draft: adds draft:true to the payload" {
+    stub_git --branch=feature/x "origin=https://bitbucket.org/ws/repo.git"
+    stub_curl '{"id":7,"links":{"html":{"href":"https://x/7"}}}' 200
+    run cmd_pr_create main "Title" "Some description" --draft
+    [ "$status" -eq 0 ]
+    contains "$(last_curl_call)" '*"draft":true*'
+    contains "$(last_curl_call)" '*"description":"Some description"*'
+}
+
+@test "pr create: without --draft sends no draft field" {
+    stub_git --branch=feature/x "origin=https://bitbucket.org/ws/repo.git"
+    stub_curl '{"id":7,"links":{"html":{"href":"https://x/7"}}}' 200
+    run cmd_pr_create main "Title" "Some description"
+    [ "$status" -eq 0 ]
+    not_contains "$(last_curl_call)" '*draft*'
+}
+
+# The flag is scanned out before the remaining args are joined, so it must not
+# leak into the description text.
+@test "pr create --draft: the flag does not leak into the description" {
+    stub_git --branch=feature/x "origin=https://bitbucket.org/ws/repo.git"
+    stub_curl '{"id":7,"links":{"html":{"href":"https://x/7"}}}' 200
+    run cmd_pr_create main "Title" --draft "Some description"
+    [ "$status" -eq 0 ]
+    contains "$(last_curl_call)" '*"description":"Some description"*'
+    not_contains "$(last_curl_call)" '*--draft*'
+}
+
+# require_args 2 counts arguments, so this reaches cmd_pr_create and would
+# otherwise open a PR titled "--draft".
+@test "pr create: --draft in the title position is rejected" {
+    stub_git --branch=feature/x "origin=https://bitbucket.org/ws/repo.git"
+    run cmd_pr_create main --draft
+    [ "$status" -ne 0 ]
+    contains "$output" '*Title is required*'
+}
+
+# The escaped brackets are load-bearing: `contains` matches a shell GLOB, so an
+# unescaped '[OPEN]' is the character class O/P/E/N. In the not_contains case
+# below an unescaped class would pass silently and test nothing.
+@test "pr list: marks a draft PR without touching the state bracket" {
+    stub_curl '{"values":[{"id":12,"state":"OPEN","draft":true,"title":"T","author":{"display_name":"A"},"source":{"branch":{"name":"s"}},"destination":{"branch":{"name":"d"}}}]}' 200
+    run cmd_pr_list
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #12 \[OPEN\] \[draft\] T*'
+}
+
+@test "pr list: leaves a non-draft PR line unchanged" {
+    stub_curl '{"values":[{"id":11,"state":"OPEN","draft":false,"title":"T","author":{"display_name":"A"},"source":{"branch":{"name":"s"}},"destination":{"branch":{"name":"d"}}}]}' 200
+    run cmd_pr_list
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #11 \[OPEN\] T*'
+    not_contains "$output" '*\[draft\]*'
+}
+
+@test "pr show: reports draft state" {
+    stub_curl_seq \
+        200 '{"id":12,"state":"OPEN","draft":true,"title":"T","author":{"display_name":"A"},"source":{"branch":{"name":"s"}},"destination":{"branch":{"name":"d"}},"participants":[],"links":{"html":{"href":"https://x/12"}}}' \
+        200 '{"values":[]}'
+    run cmd_pr_show 12
+    [ "$status" -eq 0 ]
+    contains "$output" '*Draft:       yes*'
+}
+
+@test "pr show: reports a non-draft PR as no" {
+    stub_curl_seq \
+        200 '{"id":12,"state":"OPEN","draft":false,"title":"T","author":{"display_name":"A"},"source":{"branch":{"name":"s"}},"destination":{"branch":{"name":"d"}},"participants":[],"links":{"html":{"href":"https://x/12"}}}' \
+        200 '{"values":[]}'
+    run cmd_pr_show 12
+    [ "$status" -eq 0 ]
+    contains "$output" '*Draft:       no*'
+}
+
 @test "pr inline: --old flag sends 'from' field + path + text in payload" {
     stub_curl '{"id":1,"inline":{"path":"x.ts","from":10},"links":{"html":{"href":"http://x"}}}' 200
     run cmd_pr_inline --old 5 "x.ts" 10 "old code comment"

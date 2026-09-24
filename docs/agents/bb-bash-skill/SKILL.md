@@ -54,6 +54,10 @@ bbb pr update <id> --destination=<branch>
 
 Confirm the new base before writing, then verify the destination and resulting diff with `pr show` and `pr diff`. For pipelines, start with `pr checks`; inspect a PR pipeline through `pr logs` or a known build through `pipeline log`. Never expose secrets found in logs.
 
+## Draft state
+
+Draft is a flag, not a state: a draft PR is `state=OPEN` with `draft=true`, so `pr list --state=open` includes drafts and there is no `--state=draft`. Spot one by the `[draft]` marker in `pr list` or the `Draft:` line in `pr show`. `bbb pr create ... --draft` opens a PR as a draft; `bbb pr draft <id>` / `bbb pr ready <id>` toggle the flag and are idempotent. `pr ready` publishes your own draft and is not a review verdict. Bitbucket refuses to merge a draft, so `pr ready` comes before `pr merge`.
+
 ## Raw API escape hatch
 
 Use `bbb raw`, `raw-post`, `raw-put`, or `raw-delete` only when no routed command covers the operation. Keep endpoints repository-relative, obtain authorization for writes, construct JSON safely, and read the result back. Never put credentials in endpoints, payloads, logs, or reports.
