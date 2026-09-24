@@ -10,7 +10,7 @@ The script is divided into clearly-labeled sections (line numbers shift over tim
 
 1. **Usage docstring** — header comment doubles as inline help
 2. **Helpers** — `die`, `resolve_script_dir`, `require_args`, `require_numeric`, `require_pipeline_scan` (validates `BB_BASH_PIPELINE_SCAN` and publishes the `PIPELINE_SCAN` global — must be called as a plain statement in the caller's shell, never in a subshell), `urlencode`, `resolve_workspace_repo`, `batch_action`, and the `JQ_NORM` jq prelude that normalizes Bitbucket state vocabularies for every renderer. `resolve_script_dir` is defined here (not in the top-level guard) so tests can source bbb and exercise it directly; it anchors `.env` discovery to the real script directory by following symlinks portably (no `readlink -f`).
-3. **API helpers** — `api_get`, `api_post` (both with `--soft`), `api_put`, `api_delete`
+3. **API helpers** — `api_get`, `api_get_paged`, `api_post` (GET/POST support `--soft`), `api_put`, `api_delete`
 4. **Commands** — `cmd_pr_*`, `cmd_pipeline_*`, `cmd_raw*` functions, plus the shared `pipelines_for_pr` / `pipeline_step_log` helpers they build on
 5. **`usage()`** — printed help text
 6. **`main()` router** — `case` dispatch for `pr <subcmd>`, `pipeline <subcmd>`, `raw`, `raw-post`
@@ -97,6 +97,18 @@ else
     # real HTTP error: parse the body
 fi
 ```
+
+## Collection pagination
+
+`api_get_paged <endpoint>` is the shared reader for Bitbucket collection responses. It calls `api_get` page by page and emits one JSON object whose `.values` array contains the merged values, preserving the ordinary API and transport-error contract.
+
+Bitbucket's `.next` value is absolute. The helper follows it only when it begins with the current repository `BASE_URL` and its raw path exactly matches the initial collection path; it then strips the base prefix and gives the repository-relative endpoint back to `api_get`. A different host, repository, or collection path is fatal. Exact raw-path pinning rejects literal and percent-encoded traversal before curl can normalize it, preventing response-controlled pagination data from redirecting an authenticated request.
+
+`BB_BASH_MAX_PAGES` bounds the loop (default 100, allowed 1-1000). Reaching the cap with a remaining `.next` preserves valid merged JSON on stdout and prints a truncation warning on stderr. A reader is therefore either complete or visibly partial.
+
+Use complete pagination for normal user-facing collections (`pr list`, comments, commit statuses, and pipeline steps). Do not apply it to deliberately bounded views: pipeline discovery uses `BB_BASH_PIPELINE_SCAN`, and diffstat uses one 100-item page plus its existing truncation notice.
+
+Comments are sorted only after all pages have been merged. Their public output order is newest-first across the whole result, never merely newest-first within each page.
 
 ## Error handling philosophy
 

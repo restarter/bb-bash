@@ -40,9 +40,9 @@
 #   bbb raw-post <endpoint> <json>             - Raw API call (POST)
 #   bbb raw-put <endpoint> <json>              - Raw API call (PUT)
 #   bbb raw-delete <endpoint>                  - Raw API call (DELETE; exits non-zero on failure)
-#   bbb install-agent [--rule] [--skill] [--claude] [--agents]
-#                                                 - Drop AI-agent integration artifacts into $PWD
-#   bbb help  (also -h, --help)                - Show usage; no .env or Bitbucket repo needed
+#   bbb install-agent [--claude-code|--codex|--codex-skill|--rule|--skill|--claude|--agents] [--global]
+#                                                 - Install native self-contained instruction + lazy skill
+#   bbb help [<command>]  (also -h, --help)    - Show usage; no .env or Bitbucket repo needed
 
 set -euo pipefail
 
@@ -258,6 +258,68 @@ api_get() {
     echo "$body"
 }
 
+# api_get_paged <endpoint>
+# Fetch a Bitbucket collection completely and emit one JSON object whose
+# .values contains every fetched page. Bitbucket returns .next as an absolute
+# URL; only follow URLs under this repository's BASE_URL so response data can
+# never redirect an authenticated request to another host or repository.
+#
+# BB_BASH_MAX_PAGES is a safety valve for unexpectedly deep or cyclic result
+# sets (default 100, max 1000). If the cap is reached, stdout remains valid JSON
+# containing the values fetched so far and stderr carries an explicit warning.
+api_get_paged() {
+    local endpoint="$1"
+    local raw_max_pages="${BB_BASH_MAX_PAGES:-100}"
+    require_numeric "BB_BASH_MAX_PAGES" "$raw_max_pages"
+    # Normalize leading zeroes before validation. Feeding an arbitrarily long
+    # digit string to Bash arithmetic can wrap (on Bash 3.2, 2^64+1 becomes 1)
+    # and turn an invalid value into an accepted one.
+    local max_pages="$raw_max_pages"
+    while [[ "${#max_pages}" -gt 1 && "$max_pages" == 0* ]]; do
+        max_pages="${max_pages#0}"
+    done
+    case "$max_pages" in
+        [1-9]|[1-9][0-9]|[1-9][0-9][0-9]|1000) ;;
+        *) die "BB_BASH_MAX_PAGES must be 1-1000, got: $raw_max_pages" ;;
+    esac
+
+    local collection_path="${endpoint%%\?*}"
+    local merged='{"values":[]}' page next next_endpoint next_path pages=0
+    while true; do
+        page=$(api_get "$endpoint")
+        echo "$page" | jq -e '(.values | type) == "array"' >/dev/null 2>&1 \
+            || die "invalid paginated response from Bitbucket: .values is not an array"
+        merged=$(printf '%s\n%s\n' "$merged" "$page" | jq -cs '
+            .[1] + {values: ((.[0].values // []) + .[1].values)}') \
+            || die "could not merge paginated response from Bitbucket"
+        pages=$((pages + 1))
+        next=$(echo "$page" | jq -r '.next // empty') \
+            || die "invalid paginated response from Bitbucket: could not read .next"
+        [[ -n "$next" ]] || break
+
+        if [[ "$pages" -ge "$max_pages" ]]; then
+            echo "Warning: pagination stopped after ${pages} page(s); more results remain" >&2
+            break
+        fi
+
+        case "$next" in
+            "${BASE_URL}"/*)
+                next_endpoint="${next#"$BASE_URL"}"
+                next_path="${next_endpoint%%\?*}"
+                # Pin every page to the exact original collection path. This
+                # rejects literal or encoded dot segments before curl can
+                # normalize them into a sibling-repository request.
+                [[ "$next_path" == "$collection_path" ]] \
+                    || die "pagination next URL changed collection path: $next"
+                endpoint="$next_endpoint"
+                ;;
+            *) die "pagination next URL is outside the current repository: $next" ;;
+        esac
+    done
+
+    printf '%s\n' "$merged"
+}
+
 # api_post [--soft] <endpoint> <data>
 # Default: dies on HTTP >=400.
 # --soft: prints body to stdout, returns 1 on HTTP >=400.
@@ -420,87 +482,212 @@ batch_action() {
 # Download docs/<src> from the bbb repo (ref from BB_BASH_REF, default main)
 # and write to <dest>. Honors $INSTALL_AGENT_DRY_RUN and $INSTALL_AGENT_FORCE
 # (set by cmd_install_agent before calling).
+_install_agent_reject_symlink() {
+    local dest="$1"
+    [[ ! -L "$dest" ]] || die "refusing to replace symlink destination: $dest (update its target explicitly)"
+}
+
+_install_agent_file_mode() {
+    local path="$1" mode
+    if mode=$(stat -f '%Lp' "$path" 2>/dev/null); then
+        printf '%s\n' "$mode"
+    else
+        stat -c '%a' "$path" 2>/dev/null || die "cannot read file mode: $path"
+    fi
+}
+
 _install_agent_fetch() {
     local src="$1" dest="$2"
+    local existed=false tmp dest_mode
     local ref="${BB_BASH_REF:-main}"
     local url="https://raw.githubusercontent.com/restarter/bb-bash/${ref}/docs/agents/${src}"
 
+    _install_agent_reject_symlink "$dest"
+    [[ -e "$dest" ]] && existed=true
     if [[ "${INSTALL_AGENT_DRY_RUN:-false}" == "true" ]]; then
         echo "  [dry-run] fetch: $url"
-        echo "  [dry-run]    to: $dest"
-        return 0
-    fi
-
-    if [[ -e "$dest" && "${INSTALL_AGENT_FORCE:-false}" != "true" ]]; then
-        echo "  skip: $dest (exists; use --force to overwrite)"
-        return 0
-    fi
-
-    mkdir -p -- "$(dirname -- "$dest")"
-    if ! curl --proto '=https' --tlsv1.2 -fsSL --max-redirs 5 "$url" -o "$dest"; then
-        die "failed to fetch $url"
-    fi
-    echo "  installed: $dest"
-}
-
-# _install_agent_md_section <dest-file>
-# Append the bbb agent snippet to <dest-file> (CLAUDE.md or AGENTS.md).
-# Modes:
-#   - dest missing       -> create with snippet
-#   - dest has marker    -> skip (use --force to re-append)
-#   - dest exists no mkr -> append with '---' separator
-_install_agent_md_section() {
-    local dest="$1"
-    local ref="${BB_BASH_REF:-main}"
-    local url="https://raw.githubusercontent.com/restarter/bb-bash/${ref}/docs/agents/bb-bash-snippet.md"
-    local marker='## Bitbucket via bb-bash'
-
-    if [[ "${INSTALL_AGENT_DRY_RUN:-false}" == "true" ]]; then
-        echo "  [dry-run] fetch: $url"
-        if [[ -f "$dest" ]] && grep -qF "$marker" "$dest"; then
-            echo "  [dry-run]   skip: $dest already contains bbb section"
-        elif [[ -f "$dest" ]]; then
-            echo "  [dry-run] append to: $dest"
+        if [[ -e "$dest" && "${INSTALL_AGENT_FORCE:-false}" != "true" ]]; then
+            echo "  [dry-run] skipped: $dest (exists; use --force to update)"
+        elif [[ -e "$dest" ]]; then
+            echo "  [dry-run] updated: $dest"
         else
-            echo "  [dry-run]   create: $dest"
+            echo "  [dry-run] created: $dest"
         fi
         return 0
     fi
 
-    if [[ -f "$dest" ]] && grep -qF "$marker" "$dest" && [[ "${INSTALL_AGENT_FORCE:-false}" != "true" ]]; then
-        echo "  skip: $dest already has bbb section (use --force to re-append)"
+    if [[ -e "$dest" && "${INSTALL_AGENT_FORCE:-false}" != "true" ]]; then
+        echo "  skipped: $dest (exists; use --force to update)"
         return 0
     fi
 
-    local tmp
+    mkdir -p -- "$(dirname -- "$dest")"
     tmp=$(mktemp)
     if ! curl --proto '=https' --tlsv1.2 -fsSL --max-redirs 5 "$url" -o "$tmp"; then
-        rm -f "$tmp"
+        rm -f -- "$tmp"
         die "failed to fetch $url"
     fi
-
-    # Ensure parent dir exists — required for global mode where $HOME/.claude/
-    # may not have been created yet. No-op for project-level (parent is cwd).
-    mkdir -p -- "$(dirname -- "$dest")"
-
-    if [[ -f "$dest" ]]; then
-        # Atomic-ish append: assemble (existing + separator + snippet) in a
-        # tmp file on the same FS, then rename onto $dest. A SIGINT or
-        # disk-full between the partial writes can't leave $dest with a
-        # separator but no snippet — rename either fully succeeds or leaves
-        # the original intact.
-        local merged
-        merged=$(mktemp -- "${dest}.bb-bash-XXXXXX")
-        cat -- "$dest" > "$merged"
-        printf '\n\n---\n\n' >> "$merged"
-        cat -- "$tmp" >> "$merged"
-        mv -- "$merged" "$dest"
-        echo "  appended to: $dest"
+    if [[ ! -s "$tmp" ]]; then
+        rm -f -- "$tmp"
+        die "refusing empty agent artifact from $url"
+    fi
+    if [[ "$existed" == "true" ]]; then
+        dest_mode=$(_install_agent_file_mode "$dest")
+        chmod "$dest_mode" "$tmp"
     else
-        cp -- "$tmp" "$dest"
+        chmod 644 "$tmp"
+    fi
+    mv -f -- "$tmp" "$dest"
+    if [[ "$existed" == "true" ]]; then
+        echo "  updated: $dest"
+    else
         echo "  created: $dest"
     fi
-    rm -f -- "$tmp"
+}
+
+# _install_agent_md_section <dest-file>
+# Install or update a marker-delimited bbb section in CLAUDE.md or AGENTS.md.
+# Existing content outside the managed section is preserved.
+_install_agent_md_section() {
+    local dest="$1"
+    local ref="${BB_BASH_REF:-main}"
+    local url="https://raw.githubusercontent.com/restarter/bb-bash/${ref}/docs/agents/bb-bash-snippet.md"
+    local start_marker='<!-- bb-bash:start -->'
+    local end_marker='<!-- bb-bash:end -->'
+    local legacy_re='^(## Bitbucket( Cloud)? via bb-bash|# bbb — Bitbucket Cloud workflows)$'
+    local start_count=0 end_count=0
+    local legacy_present=false legacy_trailing=false
+
+    _install_agent_reject_symlink "$dest"
+    if [[ -f "$dest" ]]; then
+        start_count=$(awk -v marker="$start_marker" '$0 == marker { n++ } END { print n+0 }' "$dest")
+        end_count=$(awk -v marker="$end_marker" '$0 == marker { n++ } END { print n+0 }' "$dest")
+        if [[ "$start_count" -ne "$end_count" || "$start_count" -gt 1 ]]; then
+            die "malformed bb-bash managed section in $dest (expected exactly one matching marker pair)"
+        fi
+        if [[ "$start_count" -eq 1 ]] && ! awk -v start="$start_marker" -v end="$end_marker" '
+            $0 == end && !opened { exit 1 }
+            $0 == start { opened = 1 }
+            $0 == end && opened { closed = 1 }
+            END { if (!closed) exit 1 }
+        ' "$dest"; then
+            die "malformed bb-bash managed section in $dest (end marker precedes start marker)"
+        fi
+        if grep -Eq "$legacy_re" "$dest"; then
+            legacy_present=true
+            if awk -v legacy="$legacy_re" '
+                $0 ~ legacy { found = 1; next }
+                found && $0 ~ /^#{1,2}[[:space:]]/ { exit 1 }
+            ' "$dest"; then
+                legacy_trailing=true
+            fi
+        fi
+    fi
+
+    if [[ "${INSTALL_AGENT_DRY_RUN:-false}" == "true" ]]; then
+        echo "  [dry-run] fetch: $url"
+        if [[ "$start_count" -eq 1 ]]; then
+            echo "  [dry-run] updated: $dest (managed section)"
+        elif [[ "$legacy_present" == "true" ]]; then
+            if [[ "${INSTALL_AGENT_FORCE:-false}" == "true" && "$legacy_trailing" == "true" ]]; then
+                echo "  [dry-run] updated: $dest (migrate legacy trailing section)"
+            elif [[ "${INSTALL_AGENT_FORCE:-false}" == "true" ]]; then
+                die "legacy bb-bash section in $dest is not trailing; live install would require manual migration"
+            else
+                echo "  [dry-run] skipped: $dest (legacy unmarked section; use --force to migrate)"
+            fi
+        elif [[ -f "$dest" ]]; then
+            echo "  [dry-run] updated: $dest (append managed section)"
+        else
+            echo "  [dry-run] created: $dest"
+        fi
+        return 0
+    fi
+
+    if [[ "$start_count" -eq 0 && "$legacy_present" == "true" \
+        && "${INSTALL_AGENT_FORCE:-false}" != "true" ]]; then
+        echo "  skipped: $dest (legacy unmarked section; use --force to migrate it)"
+        return 0
+    fi
+
+    if [[ "$start_count" -eq 0 && "$legacy_present" == "true" \
+        && "${INSTALL_AGENT_FORCE:-false}" == "true" && "$legacy_trailing" != "true" ]]; then
+        die "legacy bb-bash section in $dest is not trailing; migrate it manually to preserve later content"
+    fi
+
+    local snippet section merged dest_mode
+    snippet=$(mktemp)
+    section=$(mktemp)
+    if ! curl --proto '=https' --tlsv1.2 -fsSL --max-redirs 5 "$url" -o "$snippet"; then
+        rm -f "$snippet" "$section"
+        die "failed to fetch $url"
+    fi
+    if [[ ! -s "$snippet" ]]; then
+        rm -f "$snippet" "$section"
+        die "refusing empty agent artifact from $url"
+    fi
+    {
+        printf '%s\n' "$start_marker"
+        cat -- "$snippet"
+        printf '\n%s\n' "$end_marker"
+    } > "$section"
+    chmod 644 "$section"
+
+    mkdir -p -- "$(dirname -- "$dest")"
+
+    if [[ ! -f "$dest" ]]; then
+        cp -f -- "$section" "$dest"
+        chmod 644 "$dest"
+        echo "  created: $dest"
+    else
+        merged=$(mktemp -- "${dest}.bb-bash-XXXXXX")
+        if [[ "$start_count" -eq 1 ]]; then
+            awk -v start="$start_marker" -v end="$end_marker" -v section="$section" '
+                BEGIN { while ((getline line < section) > 0) replacement = replacement line ORS }
+                $0 == start { printf "%s", replacement; managed = 1; next }
+                managed && $0 == end { managed = 0; next }
+                !managed { print }
+            ' "$dest" > "$merged"
+        elif [[ "$legacy_present" == "true" ]]; then
+            awk -v legacy="$legacy_re" -v section="$section" '
+                BEGIN { while ((getline line < section) > 0) replacement = replacement line ORS }
+                $0 ~ legacy { printf "%s", replacement; found = 1; exit }
+                { print }
+            ' "$dest" > "$merged"
+        else
+            cat -- "$dest" > "$merged"
+            printf '\n\n' >> "$merged"
+            cat -- "$section" >> "$merged"
+        fi
+
+        if cmp -s -- "$dest" "$merged"; then
+            rm -f -- "$merged"
+            echo "  skipped: $dest (managed section is current)"
+        else
+            dest_mode=$(_install_agent_file_mode "$dest")
+            chmod "$dest_mode" "$merged"
+            mv -f -- "$merged" "$dest"
+            echo "  updated: $dest"
+        fi
+    fi
+    rm -f -- "$snippet" "$section"
+}
+
+_install_agent_codex_global_agents_dest() {
+    local codex_root="${CODEX_HOME:-$HOME/.codex}"
+    if [[ -s "$codex_root/AGENTS.override.md" ]]; then
+        printf '%s\n' "$codex_root/AGENTS.override.md"
+    else
+        printf '%s\n' "$codex_root/AGENTS.md"
+    fi
+}
+
+_install_agent_legacy_skill_notice() {
+    local legacy_dest="$1" new_dest="$2"
+    if [[ -e "$legacy_dest" && "$legacy_dest" != "$new_dest" ]]; then
+        echo "  migration: legacy skill remains at $legacy_dest"
+        echo "             bbb skill destination is $new_dest; remove the legacy directory manually after verification"
+    fi
 }
 
 # _agent_status_line <path>: print "  [present]" or "  [missing]" + path
@@ -589,7 +776,7 @@ cmd_pr_list() {
         query="${query}&q=${q_encoded}"
     fi
 
-    api_get "/pullrequests?${query}" | jq -r '
+    api_get_paged "/pullrequests?${query}" | jq -r '
         .values[] | "PR #\(.id) [\(.state)]\(if .draft then " [draft]" else "" end) \(.title)\n  Author: \(.author.display_name)\n  Branch: \(.source.branch.name) -> \(.destination.branch.name)\n"'
 }
 
@@ -925,7 +1112,7 @@ cmd_pr_checks() {
     # 1) PR-level statuses (external CI: GH Actions, Jenkins, etc.)
     echo "--- PR statuses ---"
     local statuses
-    statuses=$(api_get "/pullrequests/${pr_id}/statuses?pagelen=50")
+    statuses=$(api_get_paged "/pullrequests/${pr_id}/statuses?pagelen=50")
     local status_count
     status_count=$(echo "$statuses" | jq -r '.values | length')
     if [[ "$status_count" -eq 0 ]]; then
@@ -979,7 +1166,7 @@ pipeline_step_log() {
     uuid_enc=$(urlencode "$uuid")
     # pagelen: the steps endpoint defaults to 10, which would silently make the
     # "last step" the tenth on a longer pipeline.
-    steps=$(api_get "/pipelines/${uuid_enc}/steps/?pagelen=100")
+    steps=$(api_get_paged "/pipelines/${uuid_enc}/steps/?pagelen=100")
 
     if [[ -n "$step_n" ]]; then
         require_numeric "--step" "$step_n"
@@ -1116,8 +1303,10 @@ cmd_pr_logs() {
 cmd_pr_comments() {
     local pr_id="$1"
     require_numeric "PR id" "$pr_id"
-    api_get "/pullrequests/${pr_id}/comments?pagelen=100" | jq -r '
-        .values[]
+    api_get_paged "/pullrequests/${pr_id}/comments?pagelen=100" | jq -r '
+        .values
+        | sort_by([(.created_on // ""), (.id // 0)])
+        | reverse[]
         | select(.deleted != true)
         | "[#\(.id)] [\(.created_on[:16])] \(.user.display_name)" +
           (if .inline then " @ \(.inline.path):\(.inline.to // .inline.from)" else "" end) +
@@ -1375,7 +1564,8 @@ cmd_raw_delete() {
 # run without auth or a Bitbucket-repo CWD — the top-level guard at the
 # bottom of this file short-circuits credential resolution for it.
 cmd_install_agent() {
-    local want_rule=false want_skill=false want_claude=false want_agents=false
+    local want_rule=false want_claude_skill=false want_claude=false
+    local want_agents=false want_codex_skill=false
     local has_flag=false
     INSTALL_AGENT_DRY_RUN=false
     INSTALL_AGENT_FORCE=false
@@ -1383,53 +1573,75 @@ cmd_install_agent() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --rule)     want_rule=true; has_flag=true ;;
-            --skill)    want_skill=true; has_flag=true ;;
+            --claude-code) want_rule=true; want_claude_skill=true; has_flag=true ;;
+            --codex) want_agents=true; want_codex_skill=true; has_flag=true ;;
+            --codex-skill) want_codex_skill=true; has_flag=true ;;
+            --rule) want_rule=true; has_flag=true ;;
+            --skill) want_claude_skill=true; has_flag=true ;;
             --claude) want_claude=true; has_flag=true ;;
-            --agents)   want_agents=true; has_flag=true ;;
+            --agents) want_agents=true; has_flag=true ;;
             --global)   INSTALL_AGENT_GLOBAL=true ;;
             --dry-run)  INSTALL_AGENT_DRY_RUN=true ;;
             --force)    INSTALL_AGENT_FORCE=true ;;
             -h|--help)
                 cat <<'EOF'
-Usage: bbb install-agent [--rule] [--skill] [--claude] [--agents] [--global] [--dry-run] [--force]
+Usage: bbb install-agent [--claude-code|--codex|--codex-skill|--rule|--skill|--claude|--agents] [--global] [--dry-run] [--force]
 
-Drop AI-agent integration artifacts into the current project (default) or
-into user-global Claude Code config (--global).
+Install independently usable always-on instructions and lazy bbb skills into
+the current project (default) or user scope (--global). Selectors may combine.
 
-Artifacts (combine any subset):
+Recommended presets:
+  --claude-code  self-contained Claude rule plus lazy skill
+                  project: .claude/rules/bb-bash-rule.md
+                           .claude/skills/bbb/SKILL.md
+                  global:  $HOME/.claude/rules/bb-bash-rule.md
+                           $HOME/.claude/skills/bbb/SKILL.md
+  --codex        managed AGENTS section plus lazy skill
+                  project: ./AGENTS.md
+                           ./.agents/skills/bbb/SKILL.md
+                  global:  ${CODEX_HOME:-$HOME/.codex}/AGENTS.override.md when
+                           that file exists and is non-empty; otherwise AGENTS.md
+                           skill: $HOME/.agents/skills/bbb/SKILL.md
+  --codex-skill  lazy bbb skill only (no AGENTS.md change)
+                  project: ./.agents/skills/bbb/SKILL.md
+                  global:  $HOME/.agents/skills/bbb/SKILL.md
+
+Legacy granular selectors (retained):
   --rule       drop the Claude Code rule
                   project: ./.claude/rules/bb-bash-rule.md
                   global:  ~/.claude/rules/bb-bash-rule.md
   --skill      drop the Claude Code skill
-                  project: ./.claude/skills/bb-bash/SKILL.md
-                  global:  ~/.claude/skills/bb-bash/SKILL.md
-  --claude     append snippet to CLAUDE.md
+                  project: ./.claude/skills/bbb/SKILL.md
+                  global:  ~/.claude/skills/bbb/SKILL.md
+  --claude     manage the bb-bash section in CLAUDE.md
                   project: ./CLAUDE.md
                   global:  ~/.claude/CLAUDE.md
-  --agents     append snippet to AGENTS.md (project only — no standard global path)
+  --agents     manage the bb-bash section in AGENTS.md
                   project: ./AGENTS.md
+                  global:  effective Codex AGENTS file described above
 
 Modifiers:
-  --global     install into user-global Claude Code config ($HOME/.claude/)
-               instead of the current project. Requires explicit --rule/--skill/
-               --claude (no interactive). --agents is incompatible (no global path).
+  --global     install into user scope; requires an explicit selector or preset
   --dry-run    Print actions, do not write to disk
-  --force      Overwrite existing files / re-append to CLAUDE.md/AGENTS.md
+  --force      Refresh files and managed sections; migrate a legacy unmarked
+               bb-bash section when it is the trailing section in the file
 
 Without flags: interactive prompt (enter letter codes like 'rsca'). Interactive
 mode operates on the current project only.
 
 Env:
   BB_BASH_REF   Git ref to fetch artifacts from (default: main).
-               Pin to a release tag for reproducibility, e.g. BB_BASH_REF=v0.3.1.
+               Pin to a release tag for reproducibility, e.g. BB_BASH_REF=v0.3.2.
+  CODEX_HOME    Codex config root for the global AGENTS file only.
+               The global Codex skill always uses $HOME/.agents/skills/bbb/.
 
 Examples:
-  bbb install-agent --rule --skill                  # project-level Claude Code
-  bbb install-agent --rule --global                 # user-global rule (every project)
-  bbb install-agent --rule --skill --global         # global rule + skill
-  bbb install-agent --claude --dry-run              # preview snippet append
-  BB_BASH_REF=v0.3.1 bbb install-agent --rule       # pin to a release tag
+  bbb install-agent --claude-code                    # project Claude integration
+  bbb install-agent --codex --global --dry-run       # preview both Codex paths
+  bbb install-agent --codex --global                 # user Codex integration
+  bbb install-agent --codex-skill --global           # user Codex skill only
+  bbb install-agent --rule --skill --global          # legacy granular form
+  BB_BASH_REF=v0.3.2 bbb install-agent --rule       # pin to a release tag
 EOF
                 return 0
                 ;;
@@ -1439,21 +1651,20 @@ EOF
     done
 
     if [[ "$INSTALL_AGENT_GLOBAL" == "true" ]]; then
-        [[ "$has_flag" == "true" ]] || die "--global requires at least one of --rule/--skill/--claude (no interactive mode in global)"
-        [[ "$want_agents" != "true" ]] || die "--agents incompatible with --global: AGENTS.md has no standard user-global location. Install per-project (drop --global)."
+        [[ "$has_flag" == "true" ]] || die "--global requires an explicit selector or preset (no interactive mode in global)"
     fi
 
     if [[ "$has_flag" != "true" ]]; then
         # Under set -e, read -r -p crashes with no message on EOF/closed-stdin
         # (CI, `bbb install-agent < /dev/null`, piped non-tty contexts).
         # Short-circuit with a clear instruction instead.
-        [[ -t 0 ]] || die "no flags provided and stdin is not a tty; specify --rule/--skill/--claude/--agents"
+        [[ -t 0 ]] || die "no flags provided and stdin is not a tty; specify --claude-code/--codex or a granular selector"
         echo "Project: $PWD"
         echo "Status:"
         _agent_status_line ".claude/rules/bb-bash-rule.md"
-        _agent_status_line ".claude/skills/bb-bash/SKILL.md"
-        _agent_status_line_marked "CLAUDE.md" '## Bitbucket via bb-bash'
-        _agent_status_line_marked "AGENTS.md" '## Bitbucket via bb-bash'
+        _agent_status_line ".claude/skills/bbb/SKILL.md"
+        _agent_status_line_marked "CLAUDE.md" '<!-- bb-bash:start -->'
+        _agent_status_line_marked "AGENTS.md" '<!-- bb-bash:start -->'
         echo ""
         echo "Install: [r=rule, s=skill, c=CLAUDE.md, a=AGENTS.md, q=quit]"
         local choice
@@ -1466,23 +1677,30 @@ EOF
         # containing 'r' (e.g. "hello world") would silently turn on want_rule.
         [[ "$choice" =~ ^[rsca]+$ ]] || die "invalid letters in '$choice' (allowed: r/s/c/a, or q to quit)"
         [[ "$choice" == *r* ]] && want_rule=true
-        [[ "$choice" == *s* ]] && want_skill=true
+        [[ "$choice" == *s* ]] && want_claude_skill=true
         [[ "$choice" == *c* ]] && want_claude=true
         [[ "$choice" == *a* ]] && want_agents=true
     fi
 
-    local rule_dest skill_dest claudemd_dest agentsmd_dest base_label
+    local rule_dest claude_skill_dest claudemd_dest agentsmd_dest codex_skill_dest base_label
+    local legacy_claude_skill_dest legacy_codex_skill_dest
     if [[ "$INSTALL_AGENT_GLOBAL" == "true" ]]; then
         rule_dest="$HOME/.claude/rules/bb-bash-rule.md"
-        skill_dest="$HOME/.claude/skills/bb-bash/SKILL.md"
+        claude_skill_dest="$HOME/.claude/skills/bbb/SKILL.md"
+        legacy_claude_skill_dest="$HOME/.claude/skills/bb-bash/SKILL.md"
         claudemd_dest="$HOME/.claude/CLAUDE.md"
-        # agentsmd_dest unset — validated to be blocked above
-        base_label="$HOME/.claude (global)"
+        agentsmd_dest=$(_install_agent_codex_global_agents_dest)
+        codex_skill_dest="$HOME/.agents/skills/bbb/SKILL.md"
+        legacy_codex_skill_dest="$HOME/.agents/skills/bb-bash/SKILL.md"
+        base_label="user scope"
     else
         rule_dest=".claude/rules/bb-bash-rule.md"
-        skill_dest=".claude/skills/bb-bash/SKILL.md"
+        claude_skill_dest=".claude/skills/bbb/SKILL.md"
+        legacy_claude_skill_dest=".claude/skills/bb-bash/SKILL.md"
         claudemd_dest="CLAUDE.md"
         agentsmd_dest="AGENTS.md"
+        codex_skill_dest=".agents/skills/bbb/SKILL.md"
+        legacy_codex_skill_dest=".agents/skills/bb-bash/SKILL.md"
         base_label="$PWD"
     fi
 
@@ -1494,15 +1712,57 @@ EOF
     fi
     echo "Installing into $base_label ($mode_label, ref=${BB_BASH_REF:-main})"
 
-    $want_rule     && _install_agent_fetch "bb-bash-rule.md"        "$rule_dest"
-    $want_skill    && _install_agent_fetch "bb-bash-skill/SKILL.md" "$skill_dest"
-    $want_claude   && _install_agent_md_section "$claudemd_dest"
-    $want_agents   && _install_agent_md_section "$agentsmd_dest"
+    $want_rule          && _install_agent_fetch "bb-bash-rule.md"        "$rule_dest"
+    if $want_claude_skill; then
+        _install_agent_legacy_skill_notice "$legacy_claude_skill_dest" "$claude_skill_dest"
+        _install_agent_fetch "bb-bash-skill/SKILL.md" "$claude_skill_dest"
+    fi
+    $want_claude        && _install_agent_md_section "$claudemd_dest"
+    $want_agents        && _install_agent_md_section "$agentsmd_dest"
+    if $want_codex_skill; then
+        _install_agent_legacy_skill_notice "$legacy_codex_skill_dest" "$codex_skill_dest"
+        _install_agent_fetch "bb-bash-skill/SKILL.md" "$codex_skill_dest"
+    fi
 
     echo "Done."
 }
 
 # --- Help ---
+command_help() {
+    local key="$*"
+    case "$key" in
+        "pr list") echo "Usage: bbb pr list [--state=open|merged|declined|superseded|all] [--author=<user>]" ;;
+        "pr create") echo 'Usage: bbb pr create <target_branch> "title" [description] [--draft]' ;;
+        "pr update") echo "Usage: bbb pr update <id> [--title=<t>] [--description=<d>] [--reviewers=u1,u2] [--destination=<branch>]" ;;
+        "pr show") echo "Usage: bbb pr show <id>" ;;
+        "pr open") echo "Usage: bbb pr open <id>" ;;
+        "pr diff") echo "Usage: bbb pr diff <id> [--stat]" ;;
+        "pr checks") echo "Usage: bbb pr checks <id>" ;;
+        "pr logs") echo "Usage: bbb pr logs <id> [--step=N]" ;;
+        "pr comments") echo "Usage: bbb pr comments <id>" ;;
+        "pr comment") echo "Usage: bbb pr comment <id> <text>" ;;
+        "pr inline") echo "Usage: bbb pr inline [--old] <id> <path> <line> <text>" ;;
+        "pr approve") echo "Usage: bbb pr approve <id> [id ...]" ;;
+        "pr decline") echo "Usage: bbb pr decline <id> [id ...]" ;;
+        "pr request-changes") echo "Usage: bbb pr request-changes <id> [id ...]" ;;
+        "pr unrequest-changes") echo "Usage: bbb pr unrequest-changes <id> [id ...]" ;;
+        "pr draft") echo "Usage: bbb pr draft <id> [id ...]" ;;
+        "pr ready") echo "Usage: bbb pr ready <id> [id ...]" ;;
+        "pr merge") echo "Usage: bbb pr merge <id> [--squash|--commit|--ff] [--delete-branch] [--message=<text>]" ;;
+        "pr reply") echo "Usage: bbb pr reply <pr_id> <comment_id> <text>" ;;
+        "pr edit-comment") echo "Usage: bbb pr edit-comment <pr_id> <comment_id> <text>" ;;
+        "pr delete-comment") echo "Usage: bbb pr delete-comment <pr_id> <comment_id>" ;;
+        "pipeline log") echo "Usage: bbb pipeline log <build#> [--step=N]" ;;
+        raw) echo "Usage: bbb raw [--text] <endpoint>" ;;
+        raw-post) echo "Usage: bbb raw-post <endpoint> <json>" ;;
+        raw-put) echo "Usage: bbb raw-put <endpoint> <json>" ;;
+        raw-delete) echo "Usage: bbb raw-delete <endpoint>" ;;
+        install-agent) cmd_install_agent --help ;;
+        help) echo "Usage: bbb help [<command>]" ;;
+        *) die "Unknown command for help: ${key:-<empty>}" ;;
+    esac
+}
+
 usage() {
     # WORKSPACE/REPO may be unset when usage() runs through the short-circuit
     # path (help / install-agent / -h / --help), which skips resolve_workspace_repo.
@@ -1519,7 +1779,7 @@ usage() {
     echo "  bbb pr diff <id> [--stat]                    Full diff (--stat: file count and +/- only)"
     echo "  bbb pr checks <id>                           Show CI statuses + Bitbucket Pipelines"
     echo "  bbb pr logs <id> [--step=N]                  Pipeline step log for a PR"
-    echo "  bbb pr comments <id>                         List comments"
+    echo "  bbb pr comments <id>                         List all comments, newest first"
     echo "  bbb pr comment <id> <text>                   Add general comment"
     echo "  bbb pr inline [--old] <id> <path> <line> <text>  Inline comment (default new code, --old for deleted)"
     echo "  bbb pr approve <id> [id ...]                 Approve PR, batch-capable"
@@ -1537,9 +1797,9 @@ usage() {
     echo "  bbb raw-post <endpoint> <json>               Raw POST"
     echo "  bbb raw-put <endpoint> <json>                Raw PUT"
     echo "  bbb raw-delete <endpoint>                    Raw DELETE (exits non-zero on failure)"
-    echo "  bbb install-agent [--rule] [--skill] [--claude] [--agents] [--dry-run] [--force]"
-    echo "                                                  Drop AI-agent integration artifacts into \$PWD"
-    echo "  bbb help                                     Show this help (no .env or Bitbucket repo needed)"
+    echo "  bbb install-agent [--claude-code|--codex|--codex-skill] [--global] [--dry-run] [--force]"
+    echo "                                                  Install native agent instruction + lazy skill"
+    echo "  bbb help [<command>]                         Show help (no .env or Bitbucket repo needed)"
     echo ""
     echo "Inline comments: omit --old for new/added lines, include --old for deleted lines."
     echo ""
@@ -1551,6 +1811,7 @@ usage() {
     echo "  BB_BASH_REMOTE         Git remote name override  (optional, default: scan for bitbucket.org)"
     echo "  BB_BASH_REF            Git ref for install-agent (optional, default: main)"
     echo "  BB_BASH_PIPELINE_SCAN  Recent pipelines scanned   (optional, default: 20, max: 100)"
+    echo "  BB_BASH_MAX_PAGES     Collection page safety cap  (optional, default: 100, max: 1000)"
     echo ""
     echo "Copy .env.example to .env and fill in your values."
 }
@@ -1618,7 +1879,10 @@ main() {
         # -h/--help were already short-circuited past auth by the top-level guard
         # but had no arm here, so they fell through to *) and printed usage with
         # exit 1 — right text, wrong status, indistinguishable from a typo.
-        help|-h|--help) usage ;;
+        help)
+            if [[ $# -eq 0 ]]; then usage; else command_help "$@"; fi
+            ;;
+        -h|--help) usage ;;
         *)             usage; exit 1 ;;
     esac
 }

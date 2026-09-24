@@ -10,7 +10,7 @@ All commands die with non-zero exit on API error (unless noted). Output is plain
 
 **Synopsis:** `bbb pr list [--state=open|merged|declined|superseded|all] [--author=<user>]`
 
-**Description:** List PRs in the resolved repo. Defaults to open PRs.
+**Description:** List PRs in the resolved repo. Defaults to open PRs. Follows Bitbucket pagination until every matching PR is available (subject to the shared page safety limit).
 
 **Required scopes:** `read:pullrequest:bitbucket`
 
@@ -83,6 +83,8 @@ The file list is capped at Bitbucket's `pagelen` of 100. When more exist, the co
 
 **Description:** Show PR-level statuses (external CI integrations) + Bitbucket Pipelines for the source branch. State vocabularies are normalized: `pass` / `running` / `fail` / `stopped`. Each pipeline line also shows its `selector.type` (`pull-requests` / `branches` / `custom`).
 
+External commit statuses are fetched across every page. Pipeline discovery remains intentionally bounded by `BB_BASH_PIPELINE_SCAN`; when that scan window may be incomplete, the command says so explicitly.
+
 Pipelines are matched **client-side**. PR-triggered pipelines carry `target.source` and leave `target.ref_name` null, so no `ref_name` filter can match them; `bbb` fetches the recent window (`BB_BASH_PIPELINE_SCAN`, default 20, max 100) and matches on the source branch, the (branch-only, tag-excluded) ref name, and the PR id (`target.pullrequest.id`) — the last one finds a PR even after its source branch is renamed. Results are sorted locally rather than relying on the endpoint's `sort=` parameter. When the window comes back full with no match, the output says so instead of silently reporting no pipelines.
 
 **Required scopes:** `read:pullrequest:bitbucket` (always); `read:pipeline:bitbucket` (for Pipelines portion — degrades gracefully if absent)
@@ -93,7 +95,7 @@ Pipelines are matched **client-side**. PR-triggered pipelines carry `target.sour
 
 **Synopsis:** `bbb pr logs <id> [--step=N]`
 
-**Description:** Print the log of the newest pipeline for the PR. Defaults to the first failed step — `FAILED`, `FAILURE` and `ERROR` all count — falling back to the last step when none failed; `--step=N` selects the Nth step (1-based). A step that is still running is reported as such rather than fetched.
+**Description:** Print the log of the newest pipeline for the PR. Pipeline steps are fetched across every page. Defaults to the first failed step — `FAILED`, `FAILURE` and `ERROR` all count — falling back to the last step when none failed; `--step=N` selects the Nth step (1-based). A step that is still running is reported as such rather than fetched.
 
 **Note:** log output is untrusted input. See the warning under `raw`.
 
@@ -105,7 +107,7 @@ Pipelines are matched **client-side**. PR-triggered pipelines carry `target.sour
 
 **Synopsis:** `bbb pipeline log <build#> [--step=N]`
 
-**Description:** Same as `pr logs`, addressed by pipeline build number instead of PR. Resolves the build number to a pipeline UUID via a direct lookup, verifying the returned `build_number` matches what was asked for, and falling back to a scan of the recent window if it doesn't.
+**Description:** Same as `pr logs`, addressed by pipeline build number instead of PR. Resolves the build number to a pipeline UUID via a direct lookup, verifying the returned `build_number` matches what was asked for, and falling back to a scan of the recent window if it doesn't. Step retrieval follows every page before selecting by number or failure state.
 
 **Required scopes:** `read:pipeline:bitbucket`
 
@@ -125,7 +127,9 @@ Pipelines are matched **client-side**. PR-triggered pipelines carry `target.sour
 
 **Synopsis:** `bbb pr comments <id>`
 
-**Description:** List all comments (general + inline + replies). Excludes deleted comments.
+**Description:** List all comments (general + inline + replies), following every page and excluding deleted comments. Results are sorted globally from newest to oldest: the first comment printed is the newest and each following comment is older.
+
+If the shared page safety limit is reached while more data remains, the command prints an explicit warning instead of silently presenting a partial history as complete.
 
 **Required scopes:** `read:pullrequest:bitbucket`
 
@@ -295,13 +299,9 @@ bbb pr show 2      # now reports "-> main"
 
 ---
 
-## raw / raw-post / raw-put / raw-delete
+## raw
 
-**Synopsis:**
-- `bbb raw [--text] <endpoint>` — GET request
-- `bbb raw-post <endpoint> <json>` — POST request
-- `bbb raw-put <endpoint> <json>` — PUT request
-- `bbb raw-delete <endpoint>` — DELETE request
+**Synopsis:** `bbb raw [--text] <endpoint>`
 
 **Description:** Direct API access for endpoints not wrapped. Endpoint is relative to `/repositories/{ws}/{repo}`. Output is raw JSON (pretty-printed via `jq`). Pass `--text` — before the endpoint — for endpoints that return plain text rather than JSON, such as pipeline step logs, where `jq` would fail to parse and, under `pipefail`, leave stdout empty.
 
@@ -315,60 +315,90 @@ Four separate verbs rather than one `raw --method=`: `api_delete` returns a stat
 
 ---
 
+## raw-post
+
+**Synopsis:** `bbb raw-post <endpoint> <json>`
+
+**Description:** Direct POST access for endpoints not wrapped by a higher-level command. See [`raw`](#raw) for safety guidance.
+
+---
+
+## raw-put
+
+**Synopsis:** `bbb raw-put <endpoint> <json>`
+
+**Description:** Direct PUT access for endpoints not wrapped by a higher-level command. See [`raw`](#raw) for safety guidance.
+
+---
+
+## raw-delete
+
+**Synopsis:** `bbb raw-delete <endpoint>`
+
+**Description:** Direct DELETE access for endpoints not wrapped by a higher-level command. See [`raw`](#raw) for exit behavior and safety guidance.
+
+---
+
 ## help
 
-**Synopsis:** `bbb help` (also `bbb -h`, `bbb --help`, or `bbb` with no arguments)
+**Synopsis:** `bbb help [<command>]`
 
-**Description:** Print the command list and the configuration reference for the installed version.
+**Description:** Print the command list, or current syntax for one routed command. Multi-word commands are accepted, for example `bbb help pr comments`. The global aliases `bbb -h`, `bbb --help`, and `bbb` with no arguments still print the command list.
 
 **Required scopes:** none — this command short-circuits credential and repo resolution, so it works without a `.env` and outside a Bitbucket repository.
 
-Worth knowing for AI agents: the artifacts under `docs/agents/` are **copies** dropped into a project by `install-agent`, and `bbb` may have been upgraded since. `bbb help` is the source of truth for **which commands** the installed binary accepts — `test/test_agent_artifacts.bats` asserts it lists every command the router defines.
-
-It is deliberately not a flag reference: `usage()` is a one-screen summary and some commands carry flags it does not spell out. For those, `bbb install-agent --help` prints its own full table, and this file is the complete reference.
+Worth knowing for AI agents: installed artifacts are copies and `bbb` may have been upgraded since. `bbb help <command>` is the authoritative syntax for the installed binary; this file adds explanations and examples. `test/test_agent_artifacts.bats` keeps the router, command-specific help, and documented synopses aligned.
 
 ---
 
 ## install-agent
 
-**Synopsis:**
-- `bbb install-agent [--rule] [--skill] [--claude] [--agents] [--global] [--dry-run] [--force]`
+**Synopsis:** `bbb install-agent [--claude-code|--codex|--codex-skill|--rule|--skill|--claude|--agents] [--global] [--dry-run] [--force]`
 
-**Description:** Drop AI-agent integration artifacts into the current project (default) or into user-global Claude Code config (`--global`). Combine any subset of `--rule`, `--skill`, `--claude`, `--agents`. Without flags, prompts interactively for letter codes (`rsca`). Unlike `pr` and `raw`, this command does NOT require `.env` credentials or a Bitbucket-repo CWD — it runs from any directory.
+**Description:** Install independently usable always-on instructions and lazy `bbb` skills into project scope (default) or user scope (`--global`). Presets install both styles for convenience; granular selectors support instruction-only or skill-only use. Unlike `pr` and `raw`, this command does not require credentials or a Bitbucket-repo CWD.
 
 **Flags:**
 
 | Flag | Project destination | Global destination (`--global`) | Behavior |
 |------|---------------------|---------------------------------|----------|
+| `--claude-code` | Claude rule + skill paths below | Claude rule + skill paths below | Recommended Claude Code pair |
+| `--codex` | `./AGENTS.md` + `./.agents/skills/bbb/SKILL.md` | effective Codex AGENTS file + `$HOME/.agents/skills/bbb/SKILL.md` | Codex instruction + skill pair |
+| `--codex-skill` | `./.agents/skills/bbb/SKILL.md` | `$HOME/.agents/skills/bbb/SKILL.md` | Codex skill only; no AGENTS change |
 | `--rule` | `./.claude/rules/bb-bash-rule.md` | `~/.claude/rules/bb-bash-rule.md` | Claude Code rule, auto-loaded |
-| `--skill` | `./.claude/skills/bb-bash/SKILL.md` | `~/.claude/skills/bb-bash/SKILL.md` | Claude Code skill, lazy-loaded |
-| `--claude` | `./CLAUDE.md` | `~/.claude/CLAUDE.md` | Append `## Bitbucket via bb-bash` section (create file if missing) |
-| `--agents` | `./AGENTS.md` | *not supported — error* | Cross-tool standard; no widely-adopted user-global path |
-| `--global` | — | — | Install into user-global Claude Code config (`$HOME/.claude/`) for cross-project availability. Requires explicit `--rule`/`--skill`/`--claude` (no interactive). Incompatible with `--agents`. |
+| `--skill` | `./.claude/skills/bbb/SKILL.md` | `~/.claude/skills/bbb/SKILL.md` | Claude Code skill only |
+| `--claude` | `./CLAUDE.md` | `~/.claude/CLAUDE.md` | Manage a self-contained marked section |
+| `--agents` | `./AGENTS.md` | effective Codex AGENTS file | Manage a self-contained marked section |
+| `--global` | — | — | Use user scope; requires an explicit preset or selector |
 | `--dry-run` | — | — | Print actions, write nothing to disk |
-| `--force` | — | — | Overwrite existing files / re-append section even if marker is present |
+| `--force` | — | — | Refresh artifacts; migrate a legacy trailing unmarked section |
 
-**Idempotency:** by default skips any artifact that already exists. For `CLAUDE.md` / `AGENTS.md` the check is marker-based (`## Bitbucket via bb-bash`) — file may exist for other reasons without skipping. Re-running is safe.
+**Codex global precedence:** the instruction goes to `${CODEX_HOME:-$HOME/.codex}/AGENTS.override.md` when that file exists and is non-empty; otherwise it goes to `${CODEX_HOME:-$HOME/.codex}/AGENTS.md`. The effective path is printed. `CODEX_HOME` does not affect the global skill, which always goes to `$HOME/.agents/skills/bbb/SKILL.md`.
+
+**Idempotency:** `CLAUDE.md` and `AGENTS.md` content is enclosed by `<!-- bb-bash:start -->` / `<!-- bb-bash:end -->`. Reinstallation replaces that section in place without duplicating it and preserves unrelated content. A legacy unmarked `## Bitbucket via bb-bash` section is skipped with a migration message; `--force` replaces that heading and all trailing content with the marked canonical section.
+
+Symlink destinations are refused rather than silently replaced; update the linked target explicitly. Existing file permissions are preserved, and empty downloads are rejected before any destination is changed. A forced migration of a non-trailing legacy section fails in both dry-run and live modes because its end boundary is ambiguous.
+
+**Skill-name migration:** the public skill name and new native destination are `bbb`. If the old `.../skills/bb-bash/SKILL.md` path exists, installation reports it and writes the new `bbb` path without deleting the legacy directory. Remove the old directory manually only after verifying the new skill is discovered.
 
 **Source:** artifacts are fetched from `https://raw.githubusercontent.com/restarter/bb-bash/${BB_BASH_REF:-main}/docs/agents/`. Pin to a release tag for reproducibility:
 
 ```bash
-BB_BASH_REF=v0.3.1 bbb install-agent --rule --skill --claude --agents
+BB_BASH_REF=v0.3.2 bbb install-agent --rule --skill --claude --agents
 ```
 
 **Examples:**
 
 ```bash
-bbb install-agent                                # interactive (project)
-bbb install-agent --rule --skill                 # project-level Claude Code pair
-bbb install-agent --rule --global                # user-global rule (auto-loaded in every project)
-bbb install-agent --rule --skill --global        # global rule + skill
-bbb install-agent --claude --global              # append snippet to ~/.claude/CLAUDE.md
-bbb install-agent --claude --dry-run             # preview snippet append
-bbb install-agent --rule --force                 # overwrite existing rule
+bbb install-agent --claude-code                  # project Claude rule + skill
+bbb install-agent --claude-code --global         # user Claude rule + skill
+bbb install-agent --codex                        # project AGENTS section + skill
+bbb install-agent --codex --global --dry-run     # show both effective user paths
+bbb install-agent --codex --global               # install both Codex artifacts
+bbb install-agent --codex-skill --global         # install only $bbb for Codex
+bbb install-agent --rule --skill --global        # backward-compatible granular form
 ```
 
-**Interactive mode:** prints status of each artifact (present/missing/no-section), then reads letter codes. `rsca` = all four; `rs` = rule+skill; `q` (or empty input) = quit. Invalid characters in the input are rejected; whitelist is `r`/`s`/`c`/`a`. Refuses to run interactively when stdin is not a TTY (`bbb install-agent < /dev/null` or CI contexts) — pass explicit flags instead. Interactive mode operates on the current project only; for global install pass explicit `--global` with at least one of `--rule`/`--skill`/`--claude`.
+**Interactive mode:** without selectors, the backward-compatible project prompt offers the four granular artifacts (`rsca`). Global installation always requires an explicit preset or selector.
 
 ---
 
@@ -378,10 +408,12 @@ bbb install-agent --rule --force                 # overwrite existing rule
 - `BB_BASH_WORKSPACE=<ws>` + `BB_BASH_REPO=<repo>` — bypass git remote auto-detect entirely
 - `BB_BASH_BATCH_DELAY=<seconds>` — delay between batch API calls (default `0.3`; set `0` in tests)
 - `BB_BASH_PIPELINE_SCAN=<n>` — how many recent pipelines `pr checks` / `pr logs` / `pipeline log` scan for a match (default `20`, max `100` — Bitbucket's `pagelen` cap; a larger value is rejected rather than silently truncated)
+- `BB_BASH_MAX_PAGES=<n>` — maximum pages followed by complete collection readers (default `100`, max `1000`). If more pages remain, fetched values are rendered and an explicit truncation warning is printed.
 - `BB_BASH_EMAIL` / `BB_BASH_TOKEN` — credentials (loaded from `.env` next to script by default)
 - `BB_BASH_USER_ONLY=1` — installer-only; force `~/.local/bin` (see [`../scripts/install.sh`](../scripts/install.sh))
 - `BB_BASH_FORCE=1` — installer-only; override non-symlink overwrite refusal (see [`../scripts/install.sh`](../scripts/install.sh))
 - `BB_BASH_REF=<git-ref>` — `install-agent` only; ref to fetch agent artifacts from (default `main`)
+- `CODEX_HOME=<path>` — Codex configuration root used to select the global `AGENTS.md` / `AGENTS.override.md`; it does not change the global skill path
 
 See [design.md](design.md) for the full env precedence and auto-detect chain.
 

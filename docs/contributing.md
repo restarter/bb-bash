@@ -47,7 +47,7 @@ Skipped by default.
 4. Update `README.md` Usage section + add a full entry in [`docs/commands.md`](commands.md)
 5. Add bats tests in `test/test_pr_commands.bats` — **assert both** response parsing AND outbound payload (via `last_curl_call`)
 6. Add a line to `CHANGELOG.md [Unreleased]`
-7. Reflect the command and any new caveat in **all three** AI artifacts — [`bb-bash-rule.md`](agents/bb-bash-rule.md), [`bb-bash-snippet.md`](agents/bb-bash-snippet.md), [`bb-bash-skill/SKILL.md`](agents/bb-bash-skill/SKILL.md). They are deliberately kept at factual parity so a user can pick any one; see [`agents/README.md`](agents/README.md). **Enforced:** `test/test_agent_artifacts.bats` parses the router and fails when a command is missing from any artifact — so forgetting this step shows up as a red suite, not as a stale file. It also checks the reverse (no artifact may teach a command the router does not define) and that `bbb help` lists everything. It does NOT check wording: a new caveat still has to be written by hand. A command that deliberately does not belong in the artifacts gets an entry with its reason in `artifact_exempt()`; a new artifact file must also carry the `bbb help` pointer
+7. Reflect workflow or safety changes in **all three self-contained** AI artifacts — [`bb-bash-rule.md`](agents/bb-bash-rule.md), [`bb-bash-snippet.md`](agents/bb-bash-snippet.md), and the public [`bbb` skill](agents/bb-bash-skill/SKILL.md). Do not copy the full command inventory: `bbb help <command>` is authoritative. **Enforced:** `test/test_agent_artifacts.bats` checks the standalone review, comment-formatting, trust, authorization, and readback contracts in every artifact, plus router/help/docs synopsis alignment. Wording beyond those invariants still requires human review.
 8. If the command touched a shared helper or established a new pattern, update [`docs/design.md`](design.md) (the decision and any caveat) and this file (the pattern a contributor copies). Steps 1-7 all describe the command; these two describe the machinery behind it, and drift here stays invisible until someone writes the next command against a stale rule
 
 ## Code style
@@ -108,6 +108,21 @@ render_foo() {
 ```
 
 Two rules the reference follows. **One fetch per call** — a caller that needs both a summary and a list must not pay for the endpoint twice, so the body is captured into a variable and each renderer reads that. And **the optional part is opt-in, not the default**: adding the totals line to `pr show` would have changed the output of a shipped command for no reason, so the extra line belongs to the caller that asked for it.
+
+## Paginated collection readers
+
+Use `api_get_paged` when a routed command promises a complete Bitbucket collection:
+
+```bash
+body=$(api_get_paged "/pullrequests/${id}/comments?pagelen=100")
+echo "$body" | jq -r '.values[] | ...'
+```
+
+Do not hand-roll `.next` loops in command functions. The shared helper validates that an absolute next URL remains under the current repository and on the original collection path, merges `.values`, enforces `BB_BASH_MAX_PAGES`, and warns if the cap leaves more results.
+
+Keep deliberately bounded views bounded and explicit. Pipeline discovery is a recent-window scan controlled by `BB_BASH_PIPELINE_SCAN`; diffstat has a 100-file cap and a truncation notice. Those are not candidates for automatic full pagination unless their output contracts change intentionally.
+
+For multi-page tests, queue one response per page with `stub_curl_seq`, assert every next endpoint was requested, and prove values on later pages affect the rendered result. If output order matters, construct pages in the API's natural order and assert the final global order rather than supplying already-sorted fixtures.
 
 ## Testing pattern (REQUIRED)
 

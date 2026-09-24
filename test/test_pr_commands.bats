@@ -480,6 +480,131 @@ teardown() {
     contains "$(last_curl_call)" '*q=author.username%3D%22alice%22*'
 }
 
+@test "pr list: renders pull requests from every page" {
+    stub_curl_seq \
+        200 '{"values":[{"id":1,"state":"OPEN","title":"First","author":{"display_name":"A"},"source":{"branch":{"name":"one"}},"destination":{"branch":{"name":"main"}}}],"next":"https://api.bitbucket.org/2.0/repositories/testws/testrepo/pullrequests?page=2"}' \
+        200 '{"values":[{"id":2,"state":"OPEN","title":"Second","author":{"display_name":"B"},"source":{"branch":{"name":"two"}},"destination":{"branch":{"name":"main"}}}]}'
+
+    run cmd_pr_list
+    [ "$status" -eq 0 ]
+    contains "$output" '*PR #1*First*PR #2*Second*'
+    contains "$(nth_curl_call 2)" '*/pullrequests?page=2*'
+}
+
+@test "pr comments: fetches every page and renders newest comments first" {
+    stub_curl_seq \
+        200 '{"values":[{"id":1,"created_on":"2026-08-20T10:00:00+00:00","user":{"display_name":"Old"},"content":{"raw":"oldest"}},{"id":2,"created_on":"2026-08-21T10:00:00+00:00","user":{"display_name":"Middle"},"content":{"raw":"middle"}}],"next":"https://api.bitbucket.org/2.0/repositories/testws/testrepo/pullrequests/7/comments?page=2"}' \
+        200 '{"values":[{"id":5,"created_on":"2026-08-22T10:00:00+00:00","user":{"display_name":"Tie"},"content":{"raw":"same-time-higher-id"}},{"id":3,"created_on":"2026-08-22T10:00:00+00:00","user":{"display_name":"New"},"content":{"raw":"newest"}},{"id":4,"deleted":true,"created_on":"2026-08-23T10:00:00+00:00","user":{"display_name":"Deleted"},"content":{"raw":"hidden"}}]}'
+
+    run cmd_pr_comments 7
+    [ "$status" -eq 0 ]
+    contains "$(nth_curl_call 1)" '*/pullrequests/7/comments?pagelen=100*'
+    contains "$(nth_curl_call 2)" '*/pullrequests/7/comments?page=2*'
+    contains "$output" '*\[#5\]*same-time-higher-id*\[#3\]*newest*\[#2\]*middle*\[#1\]*oldest*'
+    not_contains "$output" '*hidden*'
+    local id
+    for id in 1 2 3 5; do
+        [ "$(printf '%s\n' "$output" | grep -cF "[#$id]")" -eq 1 ]
+    done
+}
+
+@test "pagination: refuses an off-repository next URL before sending credentials" {
+    stub_curl_seq \
+        200 '{"values":[{"id":1}],"next":"https://attacker.example/steal"}'
+
+    run api_get_paged "/pullrequests?pagelen=1"
+    [ "$status" -ne 0 ]
+    contains "$output" '*outside the current repository*'
+    [ -z "$(nth_curl_call 2)" ]
+}
+
+@test "pagination: refuses sibling-repository traversal in a next URL" {
+    stub_curl_seq \
+        200 '{"values":[{"id":1}],"next":"https://api.bitbucket.org/2.0/repositories/testws/testrepo/../other/pullrequests?page=2"}'
+
+    run api_get_paged "/pullrequests?pagelen=1"
+    [ "$status" -ne 0 ]
+    contains "$output" '*changed collection path*'
+    [ -z "$(nth_curl_call 2)" ]
+}
+
+@test "pagination: refuses encoded traversal in a next URL" {
+    stub_curl_seq \
+        200 '{"values":[{"id":1}],"next":"https://api.bitbucket.org/2.0/repositories/testws/testrepo/%2e%2e/other/pullrequests?page=2"}'
+
+    run api_get_paged "/pullrequests?pagelen=1"
+    [ "$status" -ne 0 ]
+    contains "$output" '*changed collection path*'
+    [ -z "$(nth_curl_call 2)" ]
+}
+
+@test "pagination: a later-page API failure is fatal" {
+    stub_curl_seq \
+        200 '{"values":[{"id":1}],"next":"https://api.bitbucket.org/2.0/repositories/testws/testrepo/pullrequests?page=2"}' \
+        500 '{"error":{"message":"page two failed"}}'
+
+    run api_get_paged "/pullrequests?pagelen=1"
+    [ "$status" -ne 0 ]
+    contains "$output" '*page two failed*'
+}
+
+@test "pagination: a later-page transport failure is fatal" {
+    stub_curl_then_fail \
+        '{"values":[{"id":1}],"next":"https://api.bitbucket.org/2.0/repositories/testws/testrepo/pullrequests?page=2"}' \
+        6
+
+    run api_get_paged "/pullrequests?pagelen=1"
+    [ "$status" -ne 0 ]
+    contains "$output" '*network error contacting Bitbucket*'
+    [ "$(wc -l < "$STUB_DIR/.calls" | tr -d ' ')" -eq 2 ]
+}
+
+@test "pagination: rejects an invalid page limit before the first request" {
+    export BB_BASH_MAX_PAGES=none
+    stub_curl_seq
+
+    run api_get_paged "/pullrequests?pagelen=1"
+    unset BB_BASH_MAX_PAGES
+    [ "$status" -ne 0 ]
+    contains "$output" '*BB_BASH_MAX_PAGES must be numeric*'
+    [ -z "$(nth_curl_call 1)" ]
+}
+
+@test "pagination: rejects a page limit above the safety maximum" {
+    export BB_BASH_MAX_PAGES=1001
+    stub_curl_seq
+
+    run api_get_paged "/pullrequests?pagelen=1"
+    unset BB_BASH_MAX_PAGES
+    [ "$status" -ne 0 ]
+    contains "$output" '*BB_BASH_MAX_PAGES must be 1-1000*'
+    [ -z "$(nth_curl_call 1)" ]
+}
+
+@test "pagination: rejects an overflowing numeric page limit" {
+    export BB_BASH_MAX_PAGES=18446744073709551617
+    stub_curl_seq
+
+    run api_get_paged "/pullrequests?pagelen=1"
+    unset BB_BASH_MAX_PAGES
+    [ "$status" -ne 0 ]
+    contains "$output" '*BB_BASH_MAX_PAGES must be 1-1000*'
+    [ -z "$(nth_curl_call 1)" ]
+}
+
+@test "pr comments: page safety limit warns instead of silently truncating" {
+    export BB_BASH_MAX_PAGES=1
+    stub_curl_seq \
+        200 '{"values":[{"id":1,"created_on":"2026-08-20T10:00:00+00:00","user":{"display_name":"Only"},"content":{"raw":"fetched"}}],"next":"https://api.bitbucket.org/2.0/repositories/testws/testrepo/pullrequests/7/comments?page=2"}'
+
+    run cmd_pr_comments 7
+    unset BB_BASH_MAX_PAGES
+    [ "$status" -eq 0 ]
+    contains "$output" '*fetched*'
+    contains "$output" '*Warning*pagination stopped after 1 page*more results remain*'
+    [ -z "$(nth_curl_call 2)" ]
+}
+
 @test "pr checks: degrades gracefully when pipelines call returns 403" {
     # Three calls: PR detail, statuses (success), pipelines (403)
     stub_curl_seq \
@@ -491,6 +616,19 @@ teardown() {
     contains "$output" '*PR statuses*'
     contains "$output" '*pass*'
     contains "$output" '*pipelines unavailable*'
+}
+
+@test "pr checks: renders external statuses from every page" {
+    stub_curl_seq \
+        200 '{"source":{"branch":{"name":"feature/x"}}}' \
+        200 '{"values":[{"state":"SUCCESSFUL","name":"first","url":"http://ci/1"}],"next":"https://api.bitbucket.org/2.0/repositories/testws/testrepo/pullrequests/42/statuses?page=2"}' \
+        200 '{"values":[{"state":"FAILED","name":"second","url":"http://ci/2"}]}' \
+        200 '{"values":[]}'
+
+    run cmd_pr_checks 42
+    [ "$status" -eq 0 ]
+    contains "$output" '*first*second*'
+    contains "$(nth_curl_call 3)" '*/pullrequests/42/statuses?page=2*'
 }
 
 @test "pr checks: pipelines query carries no ref_name filter" {
@@ -827,6 +965,20 @@ EOF
     contains "$output" '*step "Test" \[fail\]*'
     contains "$(nth_curl_call 3)" '*%7Bs-1%7D*'
     not_contains "$(nth_curl_call 3)" '*%7Bs-2%7D*'
+}
+
+@test "pipeline log: selects a failed step from a later page" {
+    stub_curl_seq \
+        200 '{"uuid":"{p-1}","build_number":7}' \
+        200 '{"values":[{"uuid":"{s-1}","name":"Setup","state":{"result":{"name":"SUCCESSFUL"}}}],"next":"https://api.bitbucket.org/2.0/repositories/testws/testrepo/pipelines/%7Bp-1%7D/steps/?page=2"}' \
+        200 '{"values":[{"uuid":"{s-2}","name":"Test","state":{"result":{"name":"FAILED"}}}]}' \
+        200 'later-page failure'
+
+    run cmd_pipeline_log 7
+    [ "$status" -eq 0 ]
+    contains "$output" '*step "Test" \[fail\]*later-page failure*'
+    contains "$(nth_curl_call 3)" '*/pipelines/%7Bp-1%7D/steps/?page=2*'
+    contains "$(nth_curl_call 4)" '*%7Bs-2%7D*'
 }
 
 @test "pipeline log: an ERROR step counts as failed (norm vocabulary, not literal FAILED)" {

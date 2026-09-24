@@ -15,6 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pr list` prints a `[draft]` marker after the state bracket for draft PRs, and `pr show` gained a `Draft:` line. The state bracket itself is unchanged, so anything parsing `[OPEN]` keeps working — but the `pr list` line is an output contract the AI artifacts point agents at, hence Changed rather than Added. (bb-bash-smx)
 - `api_put` gained a `--soft` mode mirroring `api_post`, and `batch_action` now takes optional `--method` / `--body` (defaulting to `POST` and `{}`) plus a fatal arm for an unrecognized flag, which previously fell through into the label position. `pr approve`, `pr decline` and `pr request-changes` send exactly what they sent before — now pinned by a test, since nothing asserted a batch call's outbound method or body until now. (bb-bash-smx)
 
+## [0.3.2] - 2026-08-25
+
+### Added
+- `bbb install-agent --claude-code` and `--codex` install native project/user instruction-and-skill pairs; `--codex-skill` installs only the Codex-native `$bbb` skill. Codex global instructions honor non-empty `AGENTS.override.md` precedence and `CODEX_HOME`, while the global skill always uses `$HOME/.agents/skills/bbb/`. Managed `AGENTS.md` / `CLAUDE.md` sections update in place without duplicating or overwriting unrelated content. Symlinks are refused rather than replaced, existing modes are preserved, and empty downloads cannot erase an artifact. (bb-bash-gz5)
+
+### Changed
+- Rule, managed snippet, and the renamed public `bbb` skill are independently usable. Each carries the complete safe PR workflow and the comment-writing conventions that prevent malformed Bitbucket Markdown and heredoc indentation/expansion errors; current syntax remains centralized in `bbb help <command>`. Existing granular installer flags remain available, and legacy `.../skills/bb-bash/` paths are reported without being silently deleted. (bb-bash-gz5)
+
+### Fixed
+- Paginated PR readers no longer silently stop at the first page. `pr comments` now fetches the complete conversation and renders comments newest-first across all pages; `pr list`, external statuses in `pr checks`, and pipeline steps also use the shared complete-pagination helper. Absolute `.next` URLs are restricted to the current repository, and `BB_BASH_MAX_PAGES` (default 100, max 1000) emits an explicit warning if its safety cap leaves more results. Intentionally bounded pipeline discovery and diffstat retain their existing scan/truncation notices. (bb-bash-z8f)
+
 ## [0.3.1] - 2026-08-06
 
 ### Added
